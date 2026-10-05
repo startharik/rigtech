@@ -584,6 +584,81 @@ function EmptyDirectory({ label }: { label: string }) {
   );
 }
 
+function TaskAssigneeSelect({ members, currentUserId }: { members: WorkspaceMember[]; currentUserId: string }) {
+  const [selectedIds, setSelectedIds] = useState(() => members
+    .filter((member) => member.id === currentUserId)
+    .map((member) => member.id));
+  const [search, setSearch] = useState("");
+  const selectedMembers = members.filter((member) => selectedIds.includes(member.id));
+  const filteredMembers = members.filter((member) =>
+    `${member.name} ${member.email}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
+
+  const toggleMember = (memberId: string) => {
+    setSelectedIds((current) => current.includes(memberId)
+      ? current.filter((id) => id !== memberId)
+      : [...current, memberId]);
+  };
+
+  return (
+    <details className="group relative mt-2">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm outline-none transition hover:border-slate-300 focus-visible:ring-2 focus-visible:ring-emerald-500 [&::-webkit-details-marker]:hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {selectedMembers.length ? (
+            <>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-800">
+                {selectedMembers[0].name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}
+              </span>
+              <span className="truncate text-sm font-medium text-slate-700">{selectedMembers[0].name}</span>
+              {selectedMembers.length > 1 && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">+{selectedMembers.length - 1}</span>}
+            </>
+          ) : <span className="text-sm text-slate-400">Select team members</span>}
+        </div>
+        <ChevronRight className="h-4 w-4 shrink-0 rotate-90 text-slate-400 transition group-open:-rotate-90" />
+      </summary>
+      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+        <label className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-slate-400">
+          <Search className="h-4 w-4 shrink-0" />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search people"
+            aria-label="Search team members"
+            className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+          />
+          <span className="shrink-0 text-[10px] font-medium text-slate-400">{selectedIds.length} selected</span>
+        </label>
+        <div className="max-h-52 overflow-y-auto p-1.5">
+          {filteredMembers.length ? filteredMembers.map((member) => {
+            const isSelected = selectedIds.includes(member.id);
+            return (
+              <label key={member.id} className={`flex cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 transition ${isSelected ? "bg-emerald-50" : "hover:bg-slate-50"}`}>
+                <input
+                  type="checkbox"
+                  name="assignee_ids"
+                  value={member.id}
+                  checked={isSelected}
+                  onChange={() => toggleMember(member.id)}
+                  className="h-4 w-4 shrink-0 accent-emerald-700"
+                />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-600">
+                  {member.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-slate-800">{member.name}</span>
+                  <span className="block truncate text-[11px] text-slate-500">{member.email}</span>
+                </span>
+              </label>
+            );
+          }) : <p className="px-3 py-5 text-center text-sm text-slate-500">No team members match that search.</p>}
+        </div>
+        <div className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">Select multiple people to assign this task to a team.</div>
+      </div>
+    </details>
+  );
+}
+
 const toTaskStatus = (status: unknown): TaskStatus =>
   status === "in_progress" ? "In progress" : status === "completed" ? "Completed" : status === "waiting" ? "Waiting" : "To do";
 
@@ -3759,17 +3834,10 @@ export default function Home() {
                 <input name="title" required placeholder="e.g. Repair Mud Tank 32 side panel" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
                   <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Assign to</label>
-                  <div className="mt-2 max-h-36 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    {members.length ? members.map((member) => (
-                      <label key={member.id} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" name="assignee_ids" value={member.id} defaultChecked={member.id === user.id} className="h-4 w-4 accent-emerald-700" />
-                        <span>{member.name}</span>
-                      </label>
-                    )) : <span className="text-sm text-slate-500">No workspace members available.</span>}
-                  </div>
+                  <TaskAssigneeSelect members={members} currentUserId={user.id} />
                   <p className="mt-1 text-[11px] text-slate-400">Select one or more people. The first selected person is the primary assignee.</p>
                 </div>
                 <div>
