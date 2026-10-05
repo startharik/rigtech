@@ -14,6 +14,7 @@ import {
   ChevronRight,
   CircleDashed,
   Check,
+  Files,
   Gauge,
   TrendingUp,
   TriangleAlert,
@@ -24,18 +25,23 @@ import {
   LogOut,
   Menu,
   MessageSquareText,
+  Package,
   Plus,
   Pencil,
   Paperclip,
   Search,
+  Share2,
   ShieldCheck,
   Sparkles,
+  StickyNote,
   Users,
   Wrench,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
+import StockManagement from "./stock-management";
+import DocumentManagement from "./document-management";
 
 type TaskStatus = "To do" | "In progress" | "Waiting" | "Completed";
 type TaskPriority = "Urgent" | "High" | "Medium" | "Low";
@@ -55,6 +61,7 @@ type Task = {
   title: string;
   project: string;
   assignee: string;
+  assigneeIds: string[];
   status: TaskStatus;
   priority: TaskPriority;
   due: string;
@@ -156,6 +163,17 @@ type WorkspaceNotification = {
   isRead: boolean;
 };
 
+type WorkspaceNote = {
+  id: string;
+  title: string;
+  body: string;
+  color: "yellow" | "blue" | "green" | "pink";
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type TaskAuditEvent = {
   id: string;
   action: string;
@@ -175,6 +193,19 @@ const formatUploadedDate = (value: string) => {
     : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(timestamp);
 };
 
+const formatTaskDueDate = (value: string) => {
+  if (!value || value === "No due date") return { label: "No due date", overdue: false };
+  const datePart = value.slice(0, 10);
+  const date = new Date(`${datePart}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return { label: value, overdue: false };
+  const today = new Date();
+  const todayPart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return {
+    label: new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date),
+    overdue: datePart < todayPart,
+  };
+};
+
 const memberRoleLabels = {
   admin: "Admin",
   manager: "Manager",
@@ -189,10 +220,13 @@ const navItems = [
   { label: "My tasks", id: "my-tasks", icon: ClipboardList },
   { label: "All tasks", id: "all-tasks", icon: Layers3 },
   { label: "Projects", id: "projects", icon: BarChart3 },
+  { label: "Stock", id: "stock", icon: Package },
+  { label: "Documents", id: "documents", icon: Files },
   { label: "Employees", id: "team", icon: Users },
   { label: "Clients", id: "clients", icon: BriefcaseBusiness },
   { label: "Departments", id: "departments", icon: FolderKanban },
   { label: "Notifications", id: "notifications", icon: Bell },
+  { label: "Sticky notes", id: "notes", icon: StickyNote },
   { label: "Settings", id: "settings", icon: ShieldCheck },
 ] as const;
 
@@ -299,6 +333,90 @@ function SortableTaskCard({ task, onOpen, onToggleComplete }: { task: Task; onOp
         <div className="mt-2 text-[11px] text-slate-500">{task.due}</div>
       </div>
     </motion.div>
+  );
+}
+
+function MobileTaskTracker({
+  tasks,
+  onOpen,
+  onStatusChange,
+  onToggleComplete,
+  canEdit,
+}: {
+  tasks: Task[];
+  onOpen: (task: Task) => void;
+  onStatusChange: (task: Task, status: TaskStatus) => void;
+  onToggleComplete: (task: Task) => void;
+  canEdit: boolean;
+}) {
+  return (
+    <div className="space-y-3 md:hidden">
+      {tasks.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center">
+          <CircleDashed className="mx-auto h-8 w-8 text-slate-400" />
+          <h2 className="mt-3 text-sm font-bold text-slate-800">No tasks match these filters</h2>
+          <p className="mt-1 text-xs text-slate-500">Try another status or priority.</p>
+        </div>
+      ) : tasks.map((task) => {
+        const due = formatTaskDueDate(task.due);
+        const initials = task.assignee.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase();
+        return (
+          <article key={task.id} className={`overflow-hidden rounded-2xl border bg-white shadow-[0_4px_14px_rgba(15,23,42,0.04)] ${task.status === "Completed" ? "border-emerald-100" : "border-slate-200"}`}>
+            <div className="flex items-start gap-3 px-3.5 pb-3 pt-3.5">
+              <button
+                type="button"
+                onClick={() => onToggleComplete(task)}
+                disabled={!canEdit}
+                aria-label={`${task.status === "Completed" ? "Reopen" : "Complete"} ${task.title}`}
+                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition ${task.status === "Completed" ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-transparent"} disabled:cursor-default`}
+              >
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button type="button" onClick={() => onOpen(task)} className="min-w-0 flex-1 text-left">
+                <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{task.project}</span>
+                <span className={`mt-1 block text-sm font-bold leading-5 ${task.status === "Completed" ? "text-slate-500" : "text-slate-900"}`}>{task.title}</span>
+                <span className="mt-1 block truncate text-xs text-slate-500">{task.department}</span>
+              </button>
+              <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${getPriorityClasses(task.priority)}`}>{task.priority}</span>
+            </div>
+
+            <button type="button" onClick={() => onOpen(task)} aria-label={`Open ${task.title}`} className="block w-full px-3.5 pb-3 text-left">
+              <span className="flex items-center gap-2">
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <span className={`block h-full rounded-full ${task.status === "Completed" ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(0, Math.min(100, task.progress))}%` }} />
+                </span>
+                <span className="w-9 text-right text-[10px] font-semibold text-slate-500">{task.progress}%</span>
+              </span>
+            </button>
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-3.5 py-2.5">
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-black text-emerald-800">{initials || "—"}</span>
+                <span className="truncate text-xs font-medium text-slate-700">{task.assignee}</span>
+              </span>
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${getStatusClasses(task.status)}`}>{task.status}</span>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 px-3.5 py-2.5">
+              <span className={`text-xs font-medium ${due.overdue && task.status !== "Completed" ? "text-rose-600" : "text-slate-500"}`}>
+                {due.overdue && task.status !== "Completed" ? "Overdue · " : "Due · "}{due.label}
+              </span>
+              {canEdit && (
+                <select
+                  value={task.status}
+                  onChange={(event) => onStatusChange(task, event.target.value as TaskStatus)}
+                  onClick={(event) => event.stopPropagation()}
+                  aria-label={`Change status for ${task.title}`}
+                  className="max-w-32 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"
+                >
+                  {(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -458,6 +576,13 @@ export default function Home() {
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [attachmentRetry, setAttachmentRetry] = useState<File | null>(null);
   const [notifications, setNotifications] = useState<WorkspaceNotification[]>([]);
+  const [notes, setNotes] = useState<WorkspaceNote[]>([]);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+  const [noteColor, setNoteColor] = useState<WorkspaceNote["color"]>("yellow");
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [sharingNote, setSharingNote] = useState<WorkspaceNote | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -515,6 +640,41 @@ export default function Home() {
       }
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !organizationId) return;
+    const loadNotes = async () => {
+      const { data, error } = await supabase
+        .from("notes")
+        .select("id, title, body, color, author_id, created_at, updated_at")
+        .eq("organization_id", organizationId)
+        .order("updated_at", { ascending: false });
+      if (error) {
+        setSyncMessage(`Unable to load sticky notes: ${error.message}`);
+        return;
+      }
+      const authorIds = [...new Set((data ?? []).map((note) => note.author_id))];
+      const { data: profiles, error: profilesError } = authorIds.length
+        ? await supabase.from("profiles").select("id, full_name, name").in("id", authorIds)
+        : { data: [], error: null };
+      if (profilesError) {
+        setSyncMessage(`Unable to load note authors: ${profilesError.message}`);
+        return;
+      }
+      const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+      setNotes((data ?? []).map((note) => ({
+        id: note.id,
+        title: note.title ?? "",
+        body: note.body ?? "",
+        color: (note.color ?? "yellow") as WorkspaceNote["color"],
+        authorId: note.author_id,
+        authorName: profileById.get(note.author_id)?.full_name ?? profileById.get(note.author_id)?.name ?? "Workspace member",
+        createdAt: note.created_at,
+        updatedAt: note.updated_at,
+      })));
+    };
+    void loadNotes();
+  }, [user, organizationId]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
@@ -593,13 +753,14 @@ export default function Home() {
         if (projectsError) throw new Error(`Project lookup failed: ${projectsError.message}`);
 
         const memberIds = (memberRows ?? []).map((row) => row.user_id);
+        const profileById = new Map<string, { full_name?: string | null; name?: string | null; email?: string | null }>();
         if (memberIds.length) {
           const { data: profiles, error: profilesError } = await supabase
             .from("profiles")
             .select("id, full_name, name, email")
             .in("id", memberIds);
           if (profilesError) throw new Error(`Profile lookup failed: ${profilesError.message}`);
-          const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+          (profiles ?? []).forEach((profile) => profileById.set(profile.id, profile));
           setMembers((memberRows ?? []).map((row) => {
             const profile = profileById.get(row.user_id);
             return {
@@ -627,6 +788,24 @@ export default function Home() {
         setProfileName(String(user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? ""));
 
         const taskRows = data as Array<Record<string, unknown>>;
+        const taskIds = taskRows.map((task) => String(task.id));
+        const { data: taskMemberRows, error: taskMembersError } = taskIds.length
+          ? await supabase.from("task_members").select("task_id, user_id").in("task_id", taskIds)
+          : { data: [], error: null };
+        if (taskMembersError) throw new Error(`Task assignee lookup failed: ${taskMembersError.message}`);
+        const taskMemberIds = [...new Set((taskMemberRows ?? []).map((row) => row.user_id))].filter((id) => !profileById.has(id));
+        if (taskMemberIds.length) {
+          const { data: taskMemberProfiles, error: taskMemberProfilesError } = await supabase
+            .from("profiles")
+            .select("id, full_name, name, email")
+            .in("id", taskMemberIds);
+          if (taskMemberProfilesError) throw new Error(`Task assignee profile lookup failed: ${taskMemberProfilesError.message}`);
+          (taskMemberProfiles ?? []).forEach((profile) => profileById.set(profile.id, profile));
+        }
+        const taskMembersByTask = new Map<string, string[]>();
+        (taskMemberRows ?? []).forEach((row) => {
+          taskMembersByTask.set(row.task_id, [...(taskMembersByTask.get(row.task_id) ?? []), row.user_id]);
+        });
         const childrenByParent = new Map<string, Array<Record<string, unknown>>>();
         taskRows.forEach((task) => {
           const parentId = typeof task.parent_task_id === "string" ? task.parent_task_id : null;
@@ -642,12 +821,19 @@ export default function Home() {
             children: toSubtasks(String(child.id)),
           }));
 
-        const nextTasks: Task[] = taskRows.filter((task) => !task.parent_task_id).map((task, index) => ({
+        const nextTasks: Task[] = taskRows.filter((task) => !task.parent_task_id).map((task, index) => {
+          const primaryAssigneeId = typeof task.assignee_id === "string" ? task.assignee_id : null;
+          const assigneeIds = taskMembersByTask.get(String(task.id)) ?? (primaryAssigneeId ? [primaryAssigneeId] : []);
+          const assigneeNames = assigneeIds
+            .map((assigneeId) => profileById.get(assigneeId)?.full_name ?? profileById.get(assigneeId)?.name)
+            .filter((name): name is string => Boolean(name));
+          return {
           id: Number(index + 1),
           supabaseId: String(task.id),
           title: String(task.title ?? `Task ${index + 1}`),
           project: String(task.project_name ?? "Standalone task"),
-          assignee: String(task.assignee_name ?? "Unassigned"),
+          assignee: assigneeNames.length ? assigneeNames.join(", ") : String(task.assignee_name ?? "Unassigned"),
+          assigneeIds,
           status: (task.status === "in_progress" ? "In progress" : task.status === "completed" ? "Completed" : task.status === "waiting" ? "Waiting" : "To do") as TaskStatus,
           priority: (task.priority === "urgent" ? "Urgent" : task.priority === "high" ? "High" : task.priority === "low" ? "Low" : "Medium") as TaskPriority,
           due: String(task.due_date ?? "This week"),
@@ -659,7 +845,8 @@ export default function Home() {
             return stats.total ? Math.round((stats.done / stats.total) * 100) : task.status === "completed" ? 100 : 0;
           })(),
           subtasks: toSubtasks(String(task.id)),
-        }));
+          };
+        });
 
         setTasks(nextTasks);
         setSelectedTask(null);
@@ -930,7 +1117,7 @@ export default function Home() {
   });
   const teamWorkload = members.map((member) => ({
     ...member,
-    activeTasks: tasks.filter((task) => task.assignee === member.name && task.status !== "Completed").length,
+    activeTasks: tasks.filter((task) => task.assigneeIds?.includes(member.id) && task.status !== "Completed").length,
   })).sort((a, b) => b.activeTasks - a.activeTasks);
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -1138,12 +1325,15 @@ export default function Home() {
     const title = String(form.get("title") ?? "").trim();
     if (!title) return;
 
+    const assigneeIds = [...new Set(form.getAll("assignee_ids").map(String).filter(Boolean))];
+    const primaryAssigneeId = assigneeIds[0] ?? "";
     const nextTask: Task = {
       id: Date.now(),
       supabaseId: "",
       title,
       project: projects.find((project) => project.id === String(form.get("project_id") ?? ""))?.name ?? "Standalone task",
-      assignee: members.find((member) => member.id === String(form.get("assignee_id") ?? ""))?.name ?? "Unassigned",
+      assignee: assigneeIds.map((id) => members.find((member) => member.id === id)?.name).filter((name): name is string => Boolean(name)).join(", ") || "Unassigned",
+      assigneeIds,
       status: "To do",
       priority: (String(form.get("priority") ?? "Medium") as TaskPriority),
       due: String(form.get("due") ?? "This week"),
@@ -1167,8 +1357,8 @@ export default function Home() {
         created_by_user_id: user.id,
         title: nextTask.title,
         description: nextTask.description,
-        assignee_id: String(form.get("assignee_id") ?? "") || null,
-        assigned_to_user_id: String(form.get("assignee_id") ?? "") || null,
+        assignee_id: primaryAssigneeId || null,
+        assigned_to_user_id: primaryAssigneeId || null,
         client_id: String(form.get("client_id") ?? "") || null,
         project_id: String(form.get("project_id") ?? "") || null,
         department: "fabrication",
@@ -1184,6 +1374,14 @@ export default function Home() {
       console.error("Unable to create task in Supabase.", createError);
       setSyncMessage("Task was not saved to Supabase. Check the database permissions.");
       return;
+    }
+
+    let assignmentSaveWarning = "";
+    if (assigneeIds.length) {
+      const { error: assignmentError } = await supabase.from("task_members").insert(
+        assigneeIds.map((userId) => ({ task_id: createdTask.id, user_id: userId })),
+      );
+      if (assignmentError) assignmentSaveWarning = `Task was created, but assignees could not be saved: ${assignmentError.message}`;
     }
 
     const createdSubtasks: TaskSubtask[] = [];
@@ -1221,19 +1419,21 @@ export default function Home() {
       });
     }
 
-    setSyncMessage(subtaskSaveWarning || "Task saved to Supabase.");
+    setSyncMessage(assignmentSaveWarning || subtaskSaveWarning || "Task saved to Supabase.");
     const savedTask = { ...nextTask, supabaseId: createdTask.id, subtasks: createdSubtasks };
     setTasks((current) => [savedTask, ...current]);
-    const assigneeId = String(form.get("assignee_id") ?? "");
-    if (assigneeId && assigneeId !== user.id) {
-      const { error: notificationError } = await supabase.from("notifications").insert({
+    const notificationRows = assigneeIds
+      .filter((assigneeId) => assigneeId !== user.id)
+      .map((assigneeId) => ({
         user_id: assigneeId,
         title: "New task assigned",
         message: `${nextTask.title} was assigned to you.`,
         type: "task_assigned",
         task_id: createdTask.id,
-      });
-      if (notificationError) console.error("Unable to create assignment notification.", notificationError);
+      }));
+    if (notificationRows.length) {
+      const { error: notificationError } = await supabase.from("notifications").insert(notificationRows);
+      if (notificationError) console.error("Unable to create assignment notifications.", notificationError);
     }
     openTask(savedTask);
     setShowCreate(false);
@@ -1629,6 +1829,82 @@ export default function Home() {
     setSettingsBusy(false);
   };
 
+  const handleCreateNote = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!user || !organizationId || !noteBody.trim()) return;
+    setNoteBusy(true);
+    const { data, error } = await supabase.from("notes").insert({
+      organization_id: organizationId,
+      author_id: user.id,
+      title: noteTitle.trim(),
+      body: noteBody.trim(),
+      color: noteColor,
+    }).select("id, title, body, color, author_id, created_at, updated_at").single();
+    if (error || !data) {
+      setSyncMessage(`Unable to save sticky note: ${error?.message ?? "Unknown error"}`);
+    } else {
+      setNotes((current) => [{
+        id: data.id,
+        title: data.title,
+        body: data.body,
+        color: data.color as WorkspaceNote["color"],
+        authorId: data.author_id,
+        authorName: userName,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      }, ...current]);
+      setNoteTitle("");
+      setNoteBody("");
+      setNoteColor("yellow");
+      setSyncMessage("Sticky note saved.");
+    }
+    setNoteBusy(false);
+  };
+
+  const handleDeleteNote = async (note: WorkspaceNote) => {
+    const { error } = await supabase.from("notes").delete().eq("id", note.id);
+    if (error) {
+      setSyncMessage(`Unable to delete sticky note: ${error.message}`);
+      return;
+    }
+    setNotes((current) => current.filter((item) => item.id !== note.id));
+    if (sharingNote?.id === note.id) setSharingNote(null);
+    setSyncMessage("Sticky note deleted.");
+  };
+
+  const handleShareInternally = async (note: WorkspaceNote, recipient: WorkspaceMember) => {
+    if (!user) return;
+    setShareBusy(true);
+    const { error } = await supabase.from("note_shares").upsert({
+      note_id: note.id,
+      user_id: recipient.id,
+      shared_by: user.id,
+    });
+    if (error) {
+      setSyncMessage(`Unable to share sticky note: ${error.message}`);
+    } else {
+      setSyncMessage(`Note shared with ${recipient.name}.`);
+      setSharingNote(null);
+    }
+    setShareBusy(false);
+  };
+
+  const handleShareExternally = async (note: WorkspaceNote) => {
+    const shareText = `${note.title || "Sticky note"}\n\n${note.body}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: note.title || "Sticky note", text: shareText });
+        setSyncMessage("Sticky note shared.");
+      } else {
+        await navigator.clipboard.writeText(shareText);
+        setSyncMessage("Sticky note copied to your clipboard.");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setSyncMessage("Unable to share this note from your device.");
+    }
+  };
+
   const pageTitle =
     view === "dashboard"
       ? "Dashboard"
@@ -1640,6 +1916,10 @@ export default function Home() {
           ? "All tasks"
         : view === "projects"
           ? "Projects"
+        : view === "stock"
+          ? "Stock management"
+        : view === "documents"
+          ? "Documents"
           : view === "team"
             ? "Employees"
             : view === "clients"
@@ -1648,6 +1928,8 @@ export default function Home() {
                 ? "Departments"
                 : view === "notifications"
                   ? "Notifications"
+                  : view === "notes"
+                    ? "Sticky notes"
                   : "Settings";
   const handleViewChange = (nextView: (typeof navItems)[number]["id"]) => {
     setView(nextView);
@@ -1735,7 +2017,7 @@ export default function Home() {
           </button>}
 
           <nav className="space-y-3">
-            {navItems.filter(({ id }) => id !== "executive" || currentRole === "admin" || currentRole === "manager").map(({ label, id, icon: Icon }) => (
+            {navItems.filter(({ id }) => (id !== "executive" || currentRole === "admin" || currentRole === "manager") && ((id !== "stock" && id !== "documents") || currentRole !== "client")).map(({ label, id, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
@@ -1799,6 +2081,15 @@ export default function Home() {
                     placeholder="Search tasks, people..."
                   />
                 </label>
+                <button
+                  type="button"
+                  onClick={() => setView("notes")}
+                  aria-label="Open sticky notes"
+                  title="Sticky notes"
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition ${view === "notes" ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"}`}
+                >
+                  <StickyNote className="h-4 w-4" />
+                </button>
                 <button type="button" onClick={() => setView("notifications")} aria-label="Open notifications" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700">
                   <Bell className="h-4 w-4" />
                   {notifications.some((notification) => !notification.isRead) && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />}
@@ -1931,6 +2222,14 @@ export default function Home() {
               </>
             )}
 
+            {view === "stock" && organizationId && (
+              <StockManagement organizationId={organizationId} role={currentRole} />
+            )}
+
+            {view === "documents" && organizationId && (
+              <DocumentManagement organizationId={organizationId} role={currentRole} projects={projects} />
+            )}
+
             {view === "executive" && (currentRole === "admin" || currentRole === "manager") && (
               <section>
                 <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -1996,10 +2295,10 @@ export default function Home() {
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Work queue</div>
-                    <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">{view === "my-tasks" ? "My tasks" : "All tasks"}</h1>
+                    <h1 className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900 sm:text-3xl">{view === "my-tasks" ? "My tasks" : "All tasks"}</h1>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+                    <div className="hidden rounded-xl border border-slate-200 bg-white p-1 sm:inline-flex">
                       <button type="button" onClick={() => setTaskLayout("list")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "list" ? "bg-slate-950 text-white" : "text-slate-600"}`}>List</button>
                       <button type="button" onClick={() => setTaskLayout("kanban")} className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "kanban" ? "bg-slate-950 text-white" : "text-slate-600"}`}><KanbanSquare className="h-3.5 w-3.5" /> Kanban</button>
                     </div>
@@ -2009,8 +2308,22 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 md:flex-row md:items-center">
-                  <label className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-500">
+                <div className="mb-3 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+                  <div className="flex min-w-max gap-2 pb-1">
+                    {[{ label: "All tasks", value: "all" }, ...(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => ({ label: status, value: status }))].map((filter) => {
+                      const count = filter.value === "all" ? tasks.length : tasks.filter((task) => task.status === filter.value).length;
+                      const selected = statusFilter === filter.value;
+                      return (
+                        <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} aria-pressed={selected} className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-300"}`}>
+                          {filter.label}<span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${selected ? "bg-white/15 text-white" : "bg-slate-100 text-slate-500"}`}>{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 sm:p-3 md:flex md:items-center">
+                  <label className="col-span-2 flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-500 md:flex-1">
                     <Search className="h-4 w-4" />
                     <input
                       value={searchTerm}
@@ -2019,14 +2332,15 @@ export default function Home() {
                       placeholder="Filter tasks, clients or teams..."
                     />
                   </label>
-                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                  <div className="flex items-center px-1 text-xs text-slate-500 md:hidden">{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"} shown</div>
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status" className="hidden rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none md:block">
                     <option value="all">All statuses</option>
                     <option value="To do">To do</option>
                     <option value="In progress">In progress</option>
                     <option value="Waiting">Waiting</option>
                     <option value="Completed">Completed</option>
                   </select>
-                  <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                  <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} aria-label="Filter by priority" className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2.5 text-sm text-slate-700 outline-none md:px-3">
                     <option value="all">All priorities</option>
                     <option value="Urgent">Urgent</option>
                     <option value="High">High</option>
@@ -2036,27 +2350,46 @@ export default function Home() {
                 </div>
 
                 {taskLayout === "kanban" ? (
-                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleKanbanDragStart} onDragCancel={() => setActiveKanbanTask(null)} onDragEnd={handleKanbanDragEnd}>
-                    <div className="grid gap-4 overflow-x-auto pb-2 md:grid-cols-4">
-                      {(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => (
-                        <KanbanColumn key={status} status={status} count={filteredTasks.filter((task) => task.status === status).length}>
-                          {filteredTasks.filter((task) => task.status === status).map((task) => (
-                            <KanbanCard
-                              key={task.id}
-                              task={task}
-                              canEdit={currentRole !== "client"}
-                              onOpen={openTask}
-                              onStatusChange={(item, nextStatus) => void handleTaskStatusChange(item, nextStatus)}
-                            />
+                  <>
+                    <div className="hidden md:block">
+                      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleKanbanDragStart} onDragCancel={() => setActiveKanbanTask(null)} onDragEnd={handleKanbanDragEnd}>
+                        <div className="grid gap-4 overflow-x-auto pb-2 md:grid-cols-4">
+                          {(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => (
+                            <KanbanColumn key={status} status={status} count={filteredTasks.filter((task) => task.status === status).length}>
+                              {filteredTasks.filter((task) => task.status === status).map((task) => (
+                                <KanbanCard
+                                  key={task.id}
+                                  task={task}
+                                  canEdit={currentRole !== "client"}
+                                  onOpen={openTask}
+                                  onStatusChange={(item, nextStatus) => void handleTaskStatusChange(item, nextStatus)}
+                                />
+                              ))}
+                            </KanbanColumn>
                           ))}
-                        </KanbanColumn>
-                      ))}
+                        </div>
+                        <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
+                          {activeKanbanTask ? <KanbanDragPreview task={activeKanbanTask} /> : null}
+                        </DragOverlay>
+                      </DndContext>
                     </div>
-                    <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }}>
-                      {activeKanbanTask ? <KanbanDragPreview task={activeKanbanTask} /> : null}
-                    </DragOverlay>
-                  </DndContext>
-                ) : <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                    <MobileTaskTracker
+                      tasks={filteredTasks}
+                      onOpen={openTask}
+                      onStatusChange={(task, status) => void handleTaskStatusChange(task, status)}
+                      onToggleComplete={(task) => void handleTaskStatusChange(task, task.status === "Completed" ? "To do" : "Completed")}
+                      canEdit={currentRole !== "client"}
+                    />
+                  </>
+                ) : <div>
+                  <MobileTaskTracker
+                    tasks={filteredTasks}
+                    onOpen={openTask}
+                    onStatusChange={(task, status) => void handleTaskStatusChange(task, status)}
+                    onToggleComplete={(task) => void handleTaskStatusChange(task, task.status === "Completed" ? "To do" : "Completed")}
+                    canEdit={currentRole !== "client"}
+                  />
+                  <div className="hidden overflow-hidden rounded-3xl border border-slate-200 bg-white md:block">
                   <div className="hidden grid-cols-[2fr_1.1fr_1fr_0.9fr_0.8fr_24px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 md:grid">
                     <span>Task</span>
                     <span>Assignee</span>
@@ -2065,9 +2398,8 @@ export default function Home() {
                     <span>Due date</span>
                     <span />
                   </div>
-
                   {filteredTasks.length > 0 ? (
-                    <div className="space-y-2 p-2 md:space-y-0 md:p-0">
+                    <div className="md:space-y-0 md:p-0">
                       {filteredTasks.map((task) => (
                         <button
                           key={task.id}
@@ -2113,6 +2445,7 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>}
               </div>
             )}
@@ -2260,6 +2593,59 @@ export default function Home() {
               </section>
             )}
 
+            {view === "notes" && (
+              <section>
+                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-amber-600">Personal workspace</div>
+                    <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">Sticky notes</h1>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-500">Capture quick ideas, reminders and hand-offs. Add as many notes as you need and share them with your workspace or outside it.</p>
+                  </div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">{notes.length} {notes.length === 1 ? "note" : "notes"}</div>
+                </div>
+
+                <form onSubmit={handleCreateNote} className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900"><StickyNote className="h-4 w-4 text-amber-500" /> Add a note</div>
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Title (optional)" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-emerald-400" />
+                    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      {(["yellow", "blue", "green", "pink"] as WorkspaceNote["color"][]).map((color) => (
+                        <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label={`${color} note`} className={`h-5 w-5 rounded-full ${color === "yellow" ? "bg-amber-300" : color === "blue" ? "bg-sky-300" : color === "green" ? "bg-emerald-300" : "bg-pink-300"} ${noteColor === color ? "ring-2 ring-slate-700 ring-offset-2" : ""}`} />
+                      ))}
+                    </div>
+                  </div>
+                  <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} required rows={4} placeholder="Write anything you want to remember..." className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm leading-6 outline-none focus:border-emerald-400" />
+                  <div className="mt-3 flex justify-end">
+                    <button disabled={noteBusy} type="submit" className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Plus className="h-4 w-4" /> {noteBusy ? "Saving…" : "Add note"}</button>
+                  </div>
+                </form>
+
+                {notes.length ? (
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                    {notes.map((note) => (
+                      <article key={note.id} className={`flex min-h-56 flex-col rounded-2xl border p-5 shadow-sm ${note.color === "yellow" ? "border-amber-200 bg-amber-50" : note.color === "blue" ? "border-sky-200 bg-sky-50" : note.color === "green" ? "border-emerald-200 bg-emerald-50" : "border-pink-200 bg-pink-50"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <h2 className="min-w-0 flex-1 break-words text-lg font-bold text-slate-900">{note.title || "Untitled note"}</h2>
+                          <button type="button" onClick={() => void handleDeleteNote(note)} aria-label={`Delete ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/70 hover:text-rose-600"><X className="h-4 w-4" /></button>
+                        </div>
+                        <p className="mt-3 flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{note.body}</p>
+                        <div className="mt-5 flex items-center justify-between gap-2 border-t border-black/5 pt-3">
+                          <span className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{formatUploadedDate(note.updatedAt)}</span>
+                          <button type="button" onClick={() => setSharingNote(note)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white"><Share2 className="h-3.5 w-3.5" /> Share</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50/50 px-6 py-16 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><StickyNote className="h-7 w-7" /></div>
+                    <h2 className="mt-4 text-lg font-bold text-slate-900">Your notes will appear here</h2>
+                    <p className="mt-1 text-sm text-slate-500">Start with a quick reminder, idea or hand-off above.</p>
+                  </div>
+                )}
+              </section>
+            )}
+
             {view === "settings" && (
               <section className="max-w-2xl">
                 <div className="mb-5">
@@ -2300,7 +2686,7 @@ export default function Home() {
               </section>
             )}
 
-            {view !== "dashboard" && view !== "executive" && view !== "my-tasks" && view !== "all-tasks" && view !== "team" && view !== "clients" && view !== "departments" && view !== "projects" && view !== "notifications" && view !== "settings" && (
+            {view !== "dashboard" && view !== "executive" && view !== "my-tasks" && view !== "all-tasks" && view !== "team" && view !== "clients" && view !== "departments" && view !== "projects" && view !== "stock" && view !== "documents" && view !== "notifications" && view !== "notes" && view !== "settings" && (
               <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 text-center">
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><ShieldCheck className="h-8 w-8" /></div>
                 <h2 className="mt-5 text-2xl font-black tracking-[-0.06em] text-slate-900">{pageTitle} is ready for your next phase</h2>
@@ -2350,7 +2736,7 @@ export default function Home() {
               </button>
             )}
             <nav className="space-y-1.5">
-              {navItems.filter(({ id }) => id !== "executive" || currentRole === "admin" || currentRole === "manager").map(({ label, id, icon: Icon }) => (
+              {navItems.filter(({ id }) => (id !== "executive" || currentRole === "admin" || currentRole === "manager") && ((id !== "stock" && id !== "documents") || currentRole !== "client")).map(({ label, id, icon: Icon }) => (
                 <button key={id} type="button" onClick={() => handleViewChange(id)} className={`flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${view === id ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "text-slate-600 hover:bg-slate-100"}`}>
                   <Icon className="h-5 w-5" />
                   <span className="flex-1">{label}</span>
@@ -2369,6 +2755,45 @@ export default function Home() {
               </button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {sharingNote && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center" onClick={() => setSharingNote(null)}>
+          <div role="dialog" aria-modal="true" aria-label="Share sticky note" onClick={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">Share note</div>
+                <h2 className="mt-1 text-xl font-black tracking-[-0.04em] text-slate-900">{sharingNote.title || "Untitled note"}</h2>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-500">{sharingNote.body}</p>
+              </div>
+              <button type="button" onClick={() => setSharingNote(null)} aria-label="Close share dialog" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-600"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="mt-6">
+              <h3 className="text-sm font-bold text-slate-900">Share outside Rigtech</h3>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={() => void handleShareExternally(sharingNote)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white"><Share2 className="h-4 w-4" /> Share from device</button>
+                <button type="button" onClick={() => void navigator.clipboard.writeText(`${sharingNote.title || "Sticky note"}\n\n${sharingNote.body}`).then(() => setSyncMessage("Sticky note copied to your clipboard."))} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700">Copy note text</button>
+              </div>
+            </div>
+            <div className="mt-6">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-bold text-slate-900">Share within workspace</h3>
+                <span className="text-xs text-slate-400">{members.length} members</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">Choose a person and they will see this note in their Sticky notes view.</p>
+              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
+                {members.filter((member) => member.id !== user?.id).map((member) => (
+                  <button key={member.id} type="button" disabled={shareBusy} onClick={() => void handleShareInternally(sharingNote, member)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-60">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">{member.name.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase()}</span>
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-800">{member.name}</span><span className="block truncate text-xs text-slate-500">{member.email}</span></span>
+                    <Share2 className="h-4 w-4 shrink-0 text-slate-400" />
+                  </button>
+                ))}
+                {!members.filter((member) => member.id !== user?.id).length && <div className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-500">No other workspace members yet.</div>}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2703,10 +3128,15 @@ export default function Home() {
               <div className="grid gap-4 sm:grid-cols-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Assign to</label>
-                  <select name="assignee_id" defaultValue={user.id} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
-                    <option value="">Unassigned</option>
-                    {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-                  </select>
+                  <div className="mt-2 max-h-36 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    {members.length ? members.map((member) => (
+                      <label key={member.id} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" name="assignee_ids" value={member.id} defaultChecked={member.id === user.id} className="h-4 w-4 accent-emerald-700" />
+                        <span>{member.name}</span>
+                      </label>
+                    )) : <span className="text-sm text-slate-500">No workspace members available.</span>}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400">Select one or more people. The first selected person is the primary assignee.</p>
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Project</label>

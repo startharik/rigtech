@@ -1,0 +1,455 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Boxes,
+  History,
+  Package,
+  Pencil,
+  Plus,
+  Search,
+  X,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
+
+type StockItem = {
+  id: string;
+  item_code: string;
+  name: string;
+  category: string;
+  description: string;
+  unit: string;
+  minimum_quantity: number;
+  quantity_on_hand: number;
+  last_unit_price: number | null;
+};
+
+type StockMovement = {
+  id: string;
+  stock_item_id: string;
+  movement_type: "receipt" | "issue";
+  quantity: number;
+  ordered_quantity: number | null;
+  movement_date: string;
+  purchase_order: string | null;
+  project_number: string | null;
+  delivery_note: string | null;
+  area: string | null;
+  mtc: string | null;
+  unit_price: number | null;
+  comments: string | null;
+};
+
+type StockRole = "admin" | "manager" | "supervisor" | "employee" | "client";
+
+const today = () => {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const formatQuantity = (value: number) =>
+  new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(value);
+
+const formatDate = (value: string) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(`${value}T12:00:00`));
+
+const itemFields = "id, item_code, name, category, description, unit, minimum_quantity, quantity_on_hand, last_unit_price";
+const movementFields = "id, stock_item_id, movement_type, quantity, ordered_quantity, movement_date, purchase_order, project_number, delivery_note, area, mtc, unit_price, comments";
+
+export default function StockManagement({
+  organizationId,
+  role,
+}: {
+  organizationId: string;
+  role: StockRole | null;
+}) {
+  const [items, setItems] = useState<StockItem[]>([]);
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<"inventory" | "history">("inventory");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [showMovementForm, setShowMovementForm] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemCode, setItemCode] = useState("");
+  const [itemName, setItemName] = useState("");
+  const [itemCategory, setItemCategory] = useState("");
+  const [itemDescription, setItemDescription] = useState("");
+  const [itemUnit, setItemUnit] = useState("pcs");
+  const [minimumQuantity, setMinimumQuantity] = useState("0");
+  const [movementType, setMovementType] = useState<"receipt" | "issue">("receipt");
+  const [movementItemId, setMovementItemId] = useState("");
+  const [movementQuantity, setMovementQuantity] = useState("");
+  const [orderedQuantity, setOrderedQuantity] = useState("");
+  const [movementDate, setMovementDate] = useState(today);
+  const [purchaseOrder, setPurchaseOrder] = useState("");
+  const [projectNumber, setProjectNumber] = useState("");
+  const [deliveryNote, setDeliveryNote] = useState("");
+  const [area, setArea] = useState("");
+  const [mtc, setMtc] = useState("");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [comments, setComments] = useState("");
+
+  const canManage = role === "admin" || role === "manager" || role === "supervisor";
+
+  const loadStock = useCallback(async () => {
+    try {
+      const [itemResult, movementResult] = await Promise.all([
+        supabase.from("stock_items").select(itemFields).eq("organization_id", organizationId).order("name"),
+        supabase.from("stock_movements").select(movementFields).eq("organization_id", organizationId).order("movement_date", { ascending: false }).order("created_at", { ascending: false }),
+      ]);
+      if (itemResult.error || movementResult.error) {
+        setErrorMessage(`Unable to load stock records: ${itemResult.error?.message ?? movementResult.error?.message}`);
+        return false;
+      }
+      setItems((itemResult.data ?? []) as StockItem[]);
+      setMovements((movementResult.data ?? []) as StockMovement[]);
+      return true;
+    } catch (error) {
+      setErrorMessage(`Unable to load stock records: ${error instanceof Error ? error.message : "Unexpected network error."}`);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [organizationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) void loadStock();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadStock]);
+
+  const filteredItems = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return items.filter((item) =>
+      !query || `${item.item_code} ${item.name} ${item.category} ${item.description}`.toLowerCase().includes(query),
+    );
+  }, [items, searchTerm]);
+
+  const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
+  const movementTotals = useMemo(() => {
+    const totals = new Map<string, { received: number; issued: number }>();
+    for (const movement of movements) {
+      const total = totals.get(movement.stock_item_id) ?? { received: 0, issued: 0 };
+      if (movement.movement_type === "receipt") total.received += Number(movement.quantity);
+      else total.issued += Number(movement.quantity);
+      totals.set(movement.stock_item_id, total);
+    }
+    return totals;
+  }, [movements]);
+
+  const resetItemForm = () => {
+    setShowItemForm(false);
+    setEditingItemId(null);
+    setItemCode("");
+    setItemName("");
+    setItemCategory("");
+    setItemDescription("");
+    setItemUnit("pcs");
+    setMinimumQuantity("0");
+  };
+
+  const resetMovementForm = () => {
+    setShowMovementForm(false);
+    setMovementType("receipt");
+    setMovementItemId("");
+    setMovementQuantity("");
+    setOrderedQuantity("");
+    setMovementDate(today());
+    setPurchaseOrder("");
+    setProjectNumber("");
+    setDeliveryNote("");
+    setArea("");
+    setMtc("");
+    setUnitPrice("");
+    setComments("");
+  };
+
+  const beginEditItem = (item: StockItem) => {
+    setEditingItemId(item.id);
+    setItemCode(item.item_code);
+    setItemName(item.name);
+    setItemCategory(item.category);
+    setItemDescription(item.description);
+    setItemUnit(item.unit);
+    setMinimumQuantity(String(item.minimum_quantity));
+    setShowItemForm(true);
+    setSuccessMessage("");
+    setErrorMessage("");
+  };
+
+  const handleSaveItem = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    const values = {
+      item_code: itemCode.trim(),
+      name: itemName.trim(),
+      category: itemCategory.trim(),
+      description: itemDescription.trim(),
+      unit: itemUnit.trim() || "pcs",
+      minimum_quantity: Number(minimumQuantity),
+    };
+    try {
+      const result = editingItemId
+        ? await supabase.from("stock_items").update(values).eq("id", editingItemId).select(itemFields).single()
+        : await supabase.from("stock_items").insert({ ...values, organization_id: organizationId }).select(itemFields).single();
+      if (result.error || !result.data) {
+        setErrorMessage(`Unable to save item: ${result.error?.message ?? "No item was returned by the database."}`);
+        return;
+      }
+      const savedItem = result.data as StockItem;
+      setItems((current) => {
+        const updated = editingItemId
+          ? current.map((item) => item.id === savedItem.id ? savedItem : item)
+          : [...current, savedItem];
+        return updated.sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setSuccessMessage(editingItemId ? "Item details updated." : "Item added to inventory.");
+      resetItemForm();
+    } catch (error) {
+      setErrorMessage(`Unable to save item: ${error instanceof Error ? error.message : "Unexpected network error."}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRecordMovement = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!movementItemId) {
+      setErrorMessage("Select an inventory item before recording stock.");
+      return;
+    }
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    try {
+      const { error } = await supabase.rpc("record_stock_movement", {
+        p_organization_id: organizationId,
+        p_stock_item_id: movementItemId,
+        p_movement_type: movementType,
+        p_quantity: Number(movementQuantity),
+        p_movement_date: movementDate,
+        p_ordered_quantity: movementType === "receipt" && orderedQuantity ? Number(orderedQuantity) : null,
+        p_purchase_order: movementType === "receipt" ? purchaseOrder.trim() || null : null,
+        p_project_number: projectNumber.trim() || null,
+        p_delivery_note: movementType === "receipt" ? deliveryNote.trim() || null : null,
+        p_area: movementType === "issue" ? area.trim() || null : null,
+        p_mtc: movementType === "receipt" ? mtc.trim() || null : null,
+        p_unit_price: movementType === "receipt" && unitPrice ? Number(unitPrice) : null,
+        p_comments: comments.trim() || null,
+      });
+      if (error) {
+        setErrorMessage(`Unable to record ${movementType}: ${error.message}`);
+        return;
+      }
+      resetMovementForm();
+      await loadStock();
+      setSuccessMessage(movementType === "receipt" ? "Stock receipt recorded." : "Stock issue recorded.");
+    } catch (error) {
+      setErrorMessage(`Unable to record ${movementType}: ${error instanceof Error ? error.message : "Unexpected network error."}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const lowStockCount = items.filter((item) => item.minimum_quantity > 0 && item.quantity_on_hand <= item.minimum_quantity).length;
+  const outOfStockCount = items.filter((item) => item.quantity_on_hand <= 0).length;
+
+  return (
+    <section>
+      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-700">Materials and inventory</div>
+          <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900 sm:text-4xl">Stock management</h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-500">Maintain the item catalogue, receive deliveries and track stock issued to each project and area.</p>
+        </div>
+        {canManage && (
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { resetItemForm(); setShowItemForm(true); setSuccessMessage(""); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-emerald-300">
+              <Plus className="h-4 w-4" /> Add item
+            </button>
+            <button type="button" disabled={!items.length} onClick={() => { resetMovementForm(); setShowMovementForm(true); setSuccessMessage(""); }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+              <ArrowDownToLine className="h-4 w-4" /> Record stock
+            </button>
+          </div>
+        )}
+      </div>
+
+      {(errorMessage || successMessage) && (
+        <div role={errorMessage ? "alert" : "status"} className={`mb-4 flex items-start justify-between gap-3 rounded-2xl border px-4 py-3 text-sm ${errorMessage ? "border-rose-200 bg-rose-50 text-rose-800" : "border-emerald-100 bg-emerald-50 text-emerald-800"}`}>
+          <span>{errorMessage || successMessage}</span>
+          <button type="button" onClick={() => { setErrorMessage(""); setSuccessMessage(""); }} aria-label="Dismiss message"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        {[
+          { label: "Items in catalogue", value: items.length, icon: Boxes, tone: "bg-slate-950 text-white" },
+          { label: "At or below minimum", value: lowStockCount, icon: Package, tone: "border-amber-200 bg-amber-50 text-amber-900" },
+          { label: "Out of stock", value: outOfStockCount, icon: ArrowUpFromLine, tone: "border-rose-200 bg-rose-50 text-rose-900" },
+        ].map(({ label, value, icon: Icon, tone }) => (
+          <div key={label} className={`rounded-2xl border border-slate-200 p-4 ${tone}`}>
+            <div className="flex items-center justify-between text-xs font-semibold opacity-80"><span>{label}</span><Icon className="h-4 w-4" /></div>
+            <div className="mt-3 text-3xl font-black tracking-[-0.05em]">{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {showItemForm && canManage && (
+        <form onSubmit={handleSaveItem} className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-bold text-slate-900">{editingItemId ? "Edit inventory item" : "Add inventory item"}</h2>
+            <button type="button" onClick={resetItemForm} aria-label="Close item form" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <label className="text-xs font-semibold text-slate-600">Item number<input value={itemCode} onChange={(event) => setItemCode(event.target.value)} required maxLength={80} placeholder="e.g. SET-HP-02-01" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Item name<input value={itemName} onChange={(event) => setItemName(event.target.value)} required maxLength={160} placeholder="e.g. UPN 120 x 6 meter" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Category<input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} maxLength={100} placeholder="e.g. Steel materials" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Unit<input value={itemUnit} onChange={(event) => setItemUnit(event.target.value)} required maxLength={24} placeholder="pcs, m, kg…" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Low-stock threshold<input value={minimumQuantity} onChange={(event) => setMinimumQuantity(event.target.value)} required type="number" min="0" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-1">Description<input value={itemDescription} onChange={(event) => setItemDescription(event.target.value)} maxLength={500} placeholder="Size, material, or specification" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" onClick={resetItemForm} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600">Cancel</button>
+            <button type="submit" disabled={saving} className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving…" : editingItemId ? "Save changes" : "Add item"}</button>
+          </div>
+        </form>
+      )}
+
+      {showMovementForm && canManage && (
+        <form onSubmit={handleRecordMovement} className="mb-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div><h2 className="font-bold text-slate-900">Record stock movement</h2><p className="mt-1 text-xs text-slate-500">Issues cannot exceed the item’s current balance.</p></div>
+            <button type="button" onClick={resetMovementForm} aria-label="Close stock movement form" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {(["receipt", "issue"] as const).map((type) => (
+              <button key={type} type="button" onClick={() => setMovementType(type)} aria-pressed={movementType === type} className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold capitalize ${movementType === type ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" : "bg-slate-100 text-slate-600"}`}>
+                {type === "receipt" ? <ArrowDownToLine className="h-4 w-4" /> : <ArrowUpFromLine className="h-4 w-4" />}
+                {type === "receipt" ? "Incoming receipt" : "Issue to project"}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-1">Item<select value={movementItemId} onChange={(event) => setMovementItemId(event.target.value)} required className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400"><option value="">Select an item</option>{items.map((item) => <option key={item.id} value={item.id}>{item.item_code} — {item.name} ({formatQuantity(item.quantity_on_hand)} {item.unit})</option>)}</select></label>
+            <label className="text-xs font-semibold text-slate-600">{movementType === "receipt" ? "Received quantity" : "Issued quantity"}<input value={movementQuantity} onChange={(event) => setMovementQuantity(event.target.value)} required type="number" min="0.001" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Date<input value={movementDate} onChange={(event) => setMovementDate(event.target.value)} required type="date" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            {movementType === "receipt" ? (
+              <>
+                <label className="text-xs font-semibold text-slate-600">Ordered quantity<input value={orderedQuantity} onChange={(event) => setOrderedQuantity(event.target.value)} type="number" min="0" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">Purchase order<input value={purchaseOrder} onChange={(event) => setPurchaseOrder(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">Project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">Delivery note<input value={deliveryNote} onChange={(event) => setDeliveryNote(event.target.value)} maxLength={120} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">MTC / certificate<input value={mtc} onChange={(event) => setMtc(event.target.value)} maxLength={120} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">Unit price<input value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} type="number" min="0" step="0.01" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+              </>
+            ) : (
+              <>
+                <label className="text-xs font-semibold text-slate-600">Project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+                <label className="text-xs font-semibold text-slate-600">Area / location<input value={area} onChange={(event) => setArea(event.target.value)} maxLength={100} placeholder="e.g. Area 1" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+              </>
+            )}
+            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-3">Comments<textarea value={comments} onChange={(event) => setComments(event.target.value)} rows={2} maxLength={500} className="mt-1.5 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" onClick={resetMovementForm} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600">Cancel</button>
+            <button type="submit" disabled={saving} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{saving ? "Saving…" : movementType === "receipt" ? "Record receipt" : "Record issue"}</button>
+          </div>
+        </form>
+      )}
+
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-1 rounded-xl border border-slate-200 bg-white p-1">
+          <button type="button" onClick={() => setActiveTab("inventory")} className={`rounded-lg px-3 py-2 text-sm font-semibold ${activeTab === "inventory" ? "bg-emerald-50 text-emerald-800" : "text-slate-500"}`}><span className="inline-flex items-center gap-2"><Boxes className="h-4 w-4" /> Inventory</span></button>
+          <button type="button" onClick={() => setActiveTab("history")} className={`rounded-lg px-3 py-2 text-sm font-semibold ${activeTab === "history" ? "bg-emerald-50 text-emerald-800" : "text-slate-500"}`}><span className="inline-flex items-center gap-2"><History className="h-4 w-4" /> Movement history</span></button>
+        </div>
+        {activeTab === "inventory" && (
+          <label className="relative block w-full sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search items" className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-emerald-400" />
+          </label>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-12 text-center text-sm text-slate-500">Loading stock records…</div>
+      ) : activeTab === "inventory" ? (
+        items.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><Boxes className="h-6 w-6" /></div>
+            <h2 className="mt-4 text-lg font-bold text-slate-900">No inventory items yet</h2>
+            <p className="mt-1 text-sm text-slate-500">{canManage ? "Add your first item to start recording receipts and project issues." : "Inventory items added by your workspace will appear here."}</p>
+            {canManage && <button type="button" onClick={() => setShowItemForm(true)} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="h-4 w-4" /> Add item</button>}
+          </div>
+        ) : filteredItems.length ? (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-4 py-3">Item</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Received</th><th className="px-4 py-3">Issued</th><th className="px-4 py-3">Balance</th><th className="px-4 py-3">Minimum</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Description</th>{canManage && <th className="px-4 py-3">Actions</th>}</tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredItems.map((item) => {
+                    const outOfStock = item.quantity_on_hand <= 0;
+                    const lowStock = !outOfStock && item.minimum_quantity > 0 && item.quantity_on_hand <= item.minimum_quantity;
+                    const totals = movementTotals.get(item.id) ?? { received: 0, issued: 0 };
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50/70">
+                        <td className="px-4 py-3"><div className="font-semibold text-slate-900">{item.name}</div><div className="mt-0.5 text-xs text-slate-500">{item.item_code}</div></td>
+                        <td className="px-4 py-3 text-slate-600">{item.category || "—"}</td>
+                        <td className="px-4 py-3 text-slate-600">{formatQuantity(totals.received)} <span className="text-slate-500">{item.unit}</span></td>
+                        <td className="px-4 py-3 text-slate-600">{formatQuantity(totals.issued)} <span className="text-slate-500">{item.unit}</span></td>
+                        <td className="px-4 py-3 font-semibold text-slate-800">{formatQuantity(item.quantity_on_hand)} <span className="font-normal text-slate-500">{item.unit}</span></td>
+                        <td className="px-4 py-3 text-slate-600">{item.minimum_quantity > 0 ? `${formatQuantity(item.minimum_quantity)} ${item.unit}` : "—"}</td>
+                        <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${outOfStock ? "bg-rose-100 text-rose-700" : lowStock ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{outOfStock ? "Out of stock" : lowStock ? "Low stock" : "In stock"}</span></td>
+                        <td className="max-w-56 truncate px-4 py-3 text-slate-500" title={item.description}>{item.description || "—"}</td>
+                        {canManage && <td className="px-4 py-3"><button type="button" onClick={() => beginEditItem(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button></td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-12 text-center text-sm text-slate-500">No inventory items match “{searchTerm}”.</div>
+        )
+      ) : movements.length ? (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+              <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Item</th><th className="px-4 py-3">Movement</th><th className="px-4 py-3">Quantity</th><th className="px-4 py-3">Project / area</th><th className="px-4 py-3">Reference</th><th className="px-4 py-3">Notes</th></tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {movements.map((movement) => {
+                  const item = itemById.get(movement.stock_item_id);
+                  return (
+                    <tr key={movement.id}>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDate(movement.movement_date)}</td>
+                      <td className="px-4 py-3"><div className="font-semibold text-slate-900">{item?.name ?? "Unknown item"}</div><div className="mt-0.5 text-xs text-slate-500">{item?.item_code ?? "Item unavailable"}</div></td>
+                      <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${movement.movement_type === "receipt" ? "bg-sky-100 text-sky-700" : "bg-violet-100 text-violet-700"}`}>{movement.movement_type === "receipt" ? "Receipt" : "Issue"}</span></td>
+                      <td className={`px-4 py-3 font-semibold ${movement.movement_type === "receipt" ? "text-emerald-700" : "text-slate-700"}`}>{movement.movement_type === "receipt" ? "+" : "−"}{formatQuantity(movement.quantity)} {item?.unit ?? ""}</td>
+                      <td className="px-4 py-3 text-slate-600">{[movement.project_number, movement.area].filter(Boolean).join(" · ") || "—"}</td>
+                      <td className="px-4 py-3 text-slate-600">{movement.movement_type === "receipt" ? [movement.purchase_order, movement.delivery_note].filter(Boolean).join(" · ") || "—" : movement.mtc || "—"}</td>
+                      <td className="max-w-56 truncate px-4 py-3 text-slate-500" title={movement.comments ?? ""}>{movement.comments || (movement.movement_type === "receipt" && movement.ordered_quantity !== null ? `Ordered ${formatQuantity(movement.ordered_quantity)}` : "—")}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-12 text-center text-sm text-slate-500">Stock receipts and project issues will appear here.</div>
+      )}
+    </section>
+  );
+}

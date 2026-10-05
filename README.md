@@ -20,6 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Stock management
+
+The workspace includes an organization-wide stock catalogue, incoming delivery receipts, and project/area stock issues. Stock balances update atomically when a movement is recorded; issues that exceed available stock are rejected. Internal workspace members can view stock records; admins, managers, and supervisors can manage them.
+
+Apply the pending SQL migrations in `supabase/migrations` to the Supabase project before using the stock module. New stock inventories start empty; add catalogue items and record receipts to establish balances.
+
+## Document management
+
+Internal workspace members can upload files up to 50 MB each, organize files in nested folders, and optionally link them to a project. Documents are stored in a private Supabase Storage bucket and downloaded using short-lived signed URLs. Admins, managers, and supervisors can delete workspace documents.
+
+Apply the document-management migration in `supabase/migrations` before using the document library.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
