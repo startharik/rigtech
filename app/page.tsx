@@ -26,9 +26,7 @@ import {
   FolderKanban,
   Layers3,
   KanbanSquare,
-  LockKeyhole,
   LogOut,
-  Mail,
   Menu,
   MessageSquareText,
   Package,
@@ -2517,108 +2515,55 @@ export default function Home() {
 
   if (!user) {
     return (
-      <main className="relative flex min-h-[100svh] overflow-hidden bg-[#f4f7f5] text-slate-900">
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.11),transparent_42%),radial-gradient(ellipse_at_bottom_right,rgba(15,23,42,0.07),transparent_40%)]" />
-        <div className="relative mx-auto grid min-h-[100svh] w-full max-w-[1440px] lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="relative hidden flex-col justify-between overflow-hidden bg-[#0b201b] px-12 py-10 text-white lg:flex xl:px-20 xl:py-14">
-            <div aria-hidden="true" className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(rgba(255,255,255,0.13)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.13)_1px,transparent_1px)] [background-size:56px_56px]" />
-            <div aria-hidden="true" className="absolute -right-32 top-1/4 h-[34rem] w-[34rem] rounded-full border border-emerald-200/10" />
-            <div aria-hidden="true" className="absolute -right-16 top-[30%] h-[26rem] w-[26rem] rounded-full border border-emerald-200/10" />
-            <div className="relative flex items-center gap-4">
-              <Image src="/logo.png" alt="" width={900} height={900} priority className="h-16 w-16 rounded-2xl bg-white p-1 object-contain" />
-              <div>
-                <div className="text-sm font-bold tracking-wide">RIGTECH</div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-emerald-100/65">Operations workspace</div>
-              </div>
+      <main className="relative flex min-h-[100svh] items-center justify-center overflow-hidden bg-[#f3f4f1] px-4 py-8 text-slate-900 sm:px-6">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-32 -top-40 h-[32rem] w-[32rem] rounded-full border border-emerald-900/[0.06]" />
+        <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-28 h-[24rem] w-[24rem] rounded-full border border-emerald-900/[0.06]" />
+        <section className="relative w-full max-w-[400px] rounded-2xl border border-black/[0.06] bg-white p-6 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.24)] sm:p-9">
+          <div className="mb-8 flex items-center gap-3">
+            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-[#10251f]">
+              <Image src="/logo.png" alt="" width={900} height={900} priority className="absolute left-1/2 top-1/2 h-24 w-24 max-w-none -translate-x-1/2 -translate-y-1/2 object-contain" />
             </div>
-            <div className="relative max-w-xl py-16">
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-emerald-100/15 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-emerald-100">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                One workspace. Work in sync.
-              </div>
-              <h1 className="text-5xl font-semibold leading-[1.08] tracking-[-0.055em] xl:text-6xl">Keep every operation moving.</h1>
-              <p className="mt-6 max-w-md text-base leading-7 text-slate-300">
-                Bring your tasks, teams, projects and documents together in one secure place.
-              </p>
-              <div className="mt-12 grid max-w-lg grid-cols-3 gap-3">
-                {[
-                  ["01", "Coordinate", "Team tasks"],
-                  ["02", "Organize", "Projects"],
-                  ["03", "Stay ready", "Documents"],
-                ].map(([number, title, label]) => (
-                  <div key={number} className="rounded-2xl border border-white/10 bg-white/[0.055] p-4">
-                    <div className="text-[10px] font-semibold tracking-[0.16em] text-emerald-300">{number}</div>
-                    <div className="mt-4 text-sm font-semibold">{title}</div>
-                    <div className="mt-1 text-xs text-slate-400">{label}</div>
-                  </div>
-                ))}
-              </div>
+            <div>
+              <div className="text-sm font-bold tracking-[0.12em] text-slate-900">RIGTECH</div>
+              <div className="mt-1 text-[10px] tracking-wide text-slate-500">Engineering</div>
             </div>
-            <div className="relative flex items-center gap-2 text-xs text-slate-400">
-              <ShieldCheck className="h-4 w-4 text-emerald-300" />
-              Secure access for your organization
-            </div>
-          </section>
-
-          <section className="relative flex min-h-[100svh] flex-1 flex-col justify-center px-5 py-8 sm:px-10 lg:px-12 xl:px-20">
-            <div className="mx-auto w-full max-w-[420px]">
-              <div className="mb-10 flex items-center gap-3 lg:hidden">
-                <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} priority className="h-14 w-14 rounded-2xl bg-white p-1 object-contain shadow-sm" />
-                <div>
-                  <div className="text-sm font-bold tracking-wide text-slate-900">RIGTECH</div>
-                  <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">Operations workspace</div>
-                </div>
-              </div>
-              <div className="mb-8">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-800">Welcome back</div>
-                <h2 className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-4xl">Sign in to your workspace</h2>
-                <p className="mt-3 text-sm leading-6 text-slate-500">Use the work email and password provided by your organization.</p>
-              </div>
-              <form onSubmit={handleAuthSubmit} className="space-y-5">
-                <label className="block">
-                  <span className="text-sm font-medium text-slate-700">Work email</span>
-                  <span className="mt-2 flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 shadow-sm transition focus-within:border-emerald-600 focus-within:ring-4 focus-within:ring-emerald-600/10">
-                    <Mail className="h-4 w-4 shrink-0 text-slate-400" />
-                    <input
-                      value={authEmail}
-                      onChange={(event) => setAuthEmail(event.target.value)}
-                      required
-                      type="email"
-                      autoComplete="username"
-                      placeholder="name@company.com"
-                      className="min-w-0 flex-1 bg-transparent py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                    />
-                  </span>
-                </label>
-                <label className="block">
-                  <span className="text-sm font-medium text-slate-700">Password</span>
-                  <span className="mt-2 flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 shadow-sm transition focus-within:border-emerald-600 focus-within:ring-4 focus-within:ring-emerald-600/10">
-                    <LockKeyhole className="h-4 w-4 shrink-0 text-slate-400" />
-                    <input
-                      value={authPassword}
-                      onChange={(event) => setAuthPassword(event.target.value)}
-                      required
-                      type="password"
-                      autoComplete="current-password"
-                      placeholder="Enter your password"
-                      className="min-w-0 flex-1 bg-transparent py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                    />
-                  </span>
-                </label>
-                {authError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-sm text-rose-700">{authError}</div>}
-                <button disabled={authBusy} type="submit" className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-900/10 transition hover:bg-emerald-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60">
-                  {authBusy ? "Signing in…" : "Sign in"}
-                  {!authBusy && <ArrowRight className="h-4 w-4" />}
-                </button>
-              </form>
-              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-white/70 p-4">
-                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
-                <p className="text-xs leading-5 text-slate-500">Access is managed by your organization. Contact your administrator if you need an account or help signing in.</p>
-              </div>
-              <p className="mt-8 text-center text-[11px] text-slate-400">Rigtech Operations · Secure workspace access</p>
-            </div>
-          </section>
-        </div>
+          </div>
+          <div className="mb-7">
+            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-[28px]">Welcome back</h1>
+            <p className="mt-1.5 text-sm text-slate-500">Sign in to continue.</p>
+          </div>
+          <form onSubmit={handleAuthSubmit} className="space-y-5">
+            <label className="block">
+              <span className="text-xs font-medium text-slate-600">Email address</span>
+              <input
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                required
+                type="email"
+                autoComplete="username"
+                placeholder="you@company.com"
+                className="mt-1.5 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-700 focus:ring-4 focus:ring-emerald-700/10"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-slate-600">Password</span>
+              <input
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                required
+                type="password"
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                className="mt-1.5 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-700 focus:ring-4 focus:ring-emerald-700/10"
+              />
+            </label>
+            {authError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{authError}</div>}
+            <button disabled={authBusy} type="submit" className="min-h-12 w-full rounded-lg bg-[#10251f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60">
+              {authBusy ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+          <p className="mt-6 text-center text-xs text-slate-400">Need access? Contact your workspace administrator.</p>
+        </section>
       </main>
     );
   }
