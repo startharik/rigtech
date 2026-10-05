@@ -5,6 +5,7 @@ import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent, Pointe
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { motion } from "framer-motion";
+import Image from "next/image";
 import {
   ArrowRight,
   BarChart3,
@@ -1943,12 +1944,9 @@ export default function Home() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f4f7f5] px-4 py-8">
         <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-lg font-bold text-white">R</div>
-            <div>
-              <div className="text-xl font-black tracking-[-0.05em] text-slate-900">rigtech</div>
-              <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">secure operations workspace</div>
-            </div>
+          <div className="mb-8 flex flex-col items-center gap-2">
+            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} priority className="h-36 w-36 object-contain" />
+            <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">secure operations workspace</div>
           </div>
           <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-700">{authMode === "sign-in" ? "Welcome back" : "Create your account"}</div>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">{authMode === "sign-in" ? "Sign in to Rigtech" : "Start your workspace"}</h1>
@@ -1999,12 +1997,9 @@ export default function Home() {
     <div className="min-h-screen overflow-x-hidden bg-[#f4f7f5] pb-24 text-slate-900 lg:pb-0">
       <div className="flex w-full">
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white px-4 py-5 lg:flex lg:flex-col">
-          <div className="mb-8 flex items-center gap-3 px-2 py-2">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-lg font-bold text-white">R</div>
-            <div>
-              <div className="text-xl font-black tracking-[-0.05em] text-slate-900">rigtech</div>
-              <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
-            </div>
+          <div className="mb-6 flex flex-col items-center gap-1 px-2 py-1">
+            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className="h-32 w-32 object-contain" />
+            <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
           </div>
 
           {currentRole !== "client" && <button
@@ -2720,11 +2715,8 @@ export default function Home() {
           <aside className="relative flex h-full w-[min(86vw,22rem)] flex-col overflow-y-auto bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-5 shadow-2xl">
             <div className="mb-8 flex items-center justify-between px-2">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-lg font-bold text-white">R</div>
-                <div>
-                  <div className="text-xl font-black tracking-[-0.05em] text-slate-900">rigtech</div>
-                  <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
-                </div>
+                <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className="h-20 w-20 object-contain" />
+                <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
               </div>
               <button type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation" className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-600">
                 <X className="h-4 w-4" />
