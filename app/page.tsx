@@ -609,6 +609,7 @@ export default function Home() {
   const [authBusy, setAuthBusy] = useState(false);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<WorkspaceMember["role"] | null>(null);
+  const [currentDate, setCurrentDate] = useState<Date | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [clients, setClients] = useState<WorkspaceClient[]>([]);
   const [departments, setDepartments] = useState<WorkspaceDepartment[]>([]);
@@ -783,17 +784,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
-    const cacheKey = `rigtech:tasks:${user.id}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      try {
-        const cachedTasks = JSON.parse(cached) as Task[];
-        window.setTimeout(() => setTasks(cachedTasks), 0);
-      } catch {
-        localStorage.removeItem(cacheKey);
-      }
-    }
+    const updateDate = () => setCurrentDate(new Date());
+    updateDate();
+    const interval = window.setInterval(updateDate, 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (user) localStorage.removeItem(`rigtech:tasks:${user.id}`);
   }, [user]);
 
   useEffect(() => {
@@ -843,11 +841,6 @@ export default function Home() {
     localStorage.setItem("rigtech:dark-mode", String(darkMode));
   }, [darkMode]);
 
-
-  useEffect(() => {
-    if (!user || !tasks.length) return;
-    localStorage.setItem(`rigtech:tasks:${user.id}`, JSON.stringify(tasks));
-  }, [tasks, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -1995,7 +1988,7 @@ export default function Home() {
     if (error) {
       setSyncMessage(`Unable to create ${view === "team" ? "employee login" : view === "clients" ? "client" : view === "projects" ? "project" : "department"}: ${error.message}`);
     } else {
-      setSyncMessage(`${view === "team" ? "Employee login" : view === "clients" ? "Client" : view === "projects" ? "Project" : "Department"} created in Supabase.`);
+      setSyncMessage(`${view === "team" ? "Employee login" : view === "clients" ? "Client" : view === "projects" ? "Project" : "Department"} added to Rigtech Operations.`);
       resetManagementForm();
     }
     setManagementBusy(false);
@@ -2077,7 +2070,7 @@ export default function Home() {
       : await supabase.from("organization_roles").insert({ ...rolePayload, organization_id: organizationId })
         .select("id, name, description, permissions").single();
     if (result.error || !result.data) {
-      setSyncMessage(`Unable to save role: ${result.error?.message ?? "Supabase returned no role."}`);
+      setSyncMessage(`Unable to save role: ${result.error?.message ?? "No role details were returned."}`);
     } else {
       const savedRole: WorkspaceRole = {
         id: result.data.id,
@@ -2152,7 +2145,7 @@ export default function Home() {
         }).select("id, title, body, color, author_id, created_at, updated_at").single();
       const { data, error } = result;
       if (error || !data) {
-        setSyncMessage(`Unable to save sticky note: ${error?.message ?? "Supabase returned no note."}`);
+        setSyncMessage(`Unable to save sticky note: ${error?.message ?? "No note details were returned."}`);
         return;
       }
       const savedNote: WorkspaceNote = {
@@ -2499,19 +2492,19 @@ export default function Home() {
             )}
             {offlineMode && (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                Offline mode: cached tasks are available. Changes will sync when you reconnect.
+                Offline mode: only tasks loaded during this session remain available. Changes will sync when you reconnect.
               </div>
             )}
             {view === "dashboard" && (
               <>
                 <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Monday, September 15, 2025</div>
-                    <h1 className="mt-2 text-[2rem] font-black leading-tight tracking-[-0.06em] text-slate-900 sm:text-4xl">Good morning, {userName}</h1>
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{currentDate ? new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(currentDate) : ""}</div>
+                    <h1 className="mt-2 text-[2rem] font-black leading-tight tracking-[-0.06em] text-slate-900 sm:text-4xl">{currentDate ? `${currentDate.getHours() < 12 ? "Good morning" : currentDate.getHours() < 18 ? "Good afternoon" : "Good evening"}, ${userName}` : `Welcome, ${userName}`}</h1>
                     <p className="mt-2 text-sm text-slate-500">A quick view of the current workload across fabrication, field and client work.</p>
                   </div>
                   <button type="button" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700">
-                    <CalendarRange className="h-4 w-4" /> September 2025
+                    <CalendarRange className="h-4 w-4" />{currentDate ? new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(currentDate) : ""}
                   </button>
                 </div>
 
