@@ -1447,13 +1447,18 @@ export default function Home() {
       }
     }
 
-    const { error } = await supabase
+    const { data: deletedTasks, error } = await supabase
       .from("tasks")
       .delete()
       .eq("id", task.supabaseId)
-      .eq("organization_id", organizationId);
+      .eq("organization_id", organizationId)
+      .select("id");
     if (error) {
       setSyncMessage(`Unable to delete task: ${error.message}`);
+      return;
+    }
+    if (!deletedTasks?.some((deletedTask) => deletedTask.id === task.supabaseId)) {
+      setSyncMessage("The task was not deleted. Check your task-management access and try again.");
       return;
     }
     setTasks((current) => current.filter((item) => item.supabaseId !== task.supabaseId));
