@@ -3,11 +3,33 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      organization_roles: {
+        Row: {
+          id: string;
+          organization_id: string;
+          name: string;
+          description: string;
+          permissions: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          name: string;
+          description?: string;
+          permissions?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["organization_roles"]["Insert"]>;
+      };
       organization_members: {
         Row: {
           organization_id: string;
           user_id: string;
           role: "admin" | "manager" | "supervisor" | "employee" | "client";
+          custom_role_id: string | null;
           department_id: string | null;
           team_id: string | null;
           created_at: string;
@@ -16,6 +38,7 @@ export type Database = {
           organization_id: string;
           user_id: string;
           role?: "admin" | "manager" | "supervisor" | "employee" | "client";
+          custom_role_id?: string | null;
           department_id?: string | null;
           team_id?: string | null;
           created_at?: string;
@@ -111,6 +134,21 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["stock_items"]["Insert"]>;
+      };
+      stock_categories: {
+        Row: {
+          id: string;
+          organization_id: string;
+          name: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          name: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["stock_categories"]["Insert"]>;
       };
       stock_movements: {
         Row: {
@@ -221,6 +259,39 @@ export type Database = {
             p_comments?: string | null;
           };
           Returns: string;
+        };
+        delete_stock_item: {
+          Args: {
+            p_organization_id: string;
+            p_stock_item_id: string;
+          };
+          Returns: undefined;
+        };
+        record_stock_movement_with_role: {
+          Args: {
+            p_organization_id: string;
+            p_stock_item_id: string;
+            p_movement_type: "receipt" | "issue";
+            p_quantity: number;
+            p_movement_date: string;
+            p_ordered_quantity?: number | null;
+            p_purchase_order?: string | null;
+            p_project_number?: string | null;
+            p_delivery_note?: string | null;
+            p_area?: string | null;
+            p_mtc?: string | null;
+            p_unit_price?: number | null;
+            p_comments?: string | null;
+          };
+          Returns: string;
+        };
+        delete_stock_item_with_role: {
+          Args: { p_organization_id: string; p_stock_item_id: string };
+          Returns: undefined;
+        };
+        current_user_can_access_module: {
+          Args: { target_module: string; target_action?: string; target_organization_id?: string | null };
+          Returns: boolean;
         };
       };
     };

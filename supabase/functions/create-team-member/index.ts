@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 type TeamMemberRequest = {
-  mode?: "employee" | "client" | "update";
+  mode?: "employee" | "client" | "update" | "assign-role";
   member_id?: string;
   client_name?: string;
   department_id?: string | null;
@@ -19,6 +19,7 @@ type TeamMemberRequest = {
   availability_status?: "available" | "limited" | "unavailable" | "leave";
   capacity_hours_per_week?: number;
   max_active_tasks?: number;
+  custom_role_id?: string | null;
 };
 
 const json = (body: Record<string, unknown>, status = 200) =>
@@ -65,23 +66,78 @@ async function handleRequest(request: Request): Promise<Response> {
   const memberRole = payload.role ?? "employee";
   const isClient = payload.mode === "client";
   const isUpdate = payload.mode === "update";
+  const isRoleAssignment = payload.mode === "assign-role";
   const clientName = payload.client_name?.trim();
+  const { data: requesterMembership, error: membershipError } = await admin
+    .from("organization_members")
+    .select("organization_id, role, custom_role_id")
+    .eq("user_id", authData.user.id)
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) return json({ error: membershipError.message }, 500);
+  if (!requesterMembership) return json({ error: "A workspace membership is required to manage team logins." }, 403);
+
+  const canManageRoles = requesterMembership.role === "admin" || requesterMembership.role === "manager";
+  let canManageTeam = canManageRoles;
+  if (!canManageTeam && requesterMembership.custom_role_id) {
+    const { data: assignedRole, error: assignedRoleError } = await admin
+      .from("organization_roles")
+      .select("permissions")
+      .eq("organization_id", requesterMembership.organization_id)
+      .eq("id", requesterMembership.custom_role_id)
+      .maybeSingle();
+    if (assignedRoleError) return json({ error: assignedRoleError.message }, 500);
+    canManageTeam = assignedRole?.permissions?.team?.manage === true;
+  }
+  if (!canManageTeam) return json({ error: "Your workspace role cannot manage team members." }, 403);
+
+  if (isRoleAssignment) {
+    if (!canManageRoles) return json({ error: "Only organization admins and managers can assign custom roles." }, 403);
+    if (!payload.member_id) return json({ error: "Member id is required." }, 400);
+    const { data: targetMembership, error: targetError } = await admin
+      .from("organization_members")
+      .select("user_id, role")
+      .eq("organization_id", requesterMembership.organization_id)
+      .eq("user_id", payload.member_id)
+      .maybeSingle();
+    if (targetError) return json({ error: targetError.message }, 500);
+    if (!targetMembership) return json({ error: "Workspace membership was not found." }, 404);
+    if (payload.custom_role_id && ["admin", "manager"].includes(targetMembership.role)) {
+      return json({ error: "Built-in admin and manager accounts cannot be assigned custom roles." }, 400);
+    }
+
+    if (payload.custom_role_id) {
+      const { data: targetRole, error: roleError } = await admin
+        .from("organization_roles")
+        .select("id")
+        .eq("organization_id", requesterMembership.organization_id)
+        .eq("id", payload.custom_role_id)
+        .maybeSingle();
+      if (roleError) return json({ error: roleError.message }, 500);
+      if (!targetRole) return json({ error: "The selected role is not part of this organization." }, 400);
+    }
+
+    const { error: assignmentError } = await admin
+      .from("organization_members")
+      .update({ custom_role_id: payload.custom_role_id || null })
+      .eq("organization_id", requesterMembership.organization_id)
+      .eq("user_id", payload.member_id);
+    if (assignmentError) return json({ error: assignmentError.message }, 500);
+    return json({ member_id: payload.member_id, custom_role_id: payload.custom_role_id || null });
+  }
+
   if (!memberName || !memberEmail || (!isUpdate && (!memberPassword || memberPassword.length < 8)) || (isUpdate && memberPassword && memberPassword.length < 8)) {
     return json({ error: isUpdate ? "Member name and email are required. New passwords must be at least 8 characters." : "Member name, email, and an 8+ character password are required." }, 400);
   }
 
-  const { data: requesterMembership, error: membershipError } = await admin
-    .from("organization_members")
-    .select("organization_id, role")
-    .eq("user_id", authData.user.id)
-    .in("role", ["admin", "manager"])
-    .limit(1)
-    .maybeSingle();
-  if (membershipError) return json({ error: membershipError.message }, 500);
-  if (!requesterMembership) return json({ error: "Only organization admins and managers can add team logins." }, 403);
-
-  if (memberRole === "admin" && requesterMembership.role !== "admin") {
+  if ((memberRole === "admin" || memberRole === "manager") && requesterMembership.role !== "admin") {
     return json({ error: "Only an admin can create another admin login." }, 403);
+  }
+  if (payload.custom_role_id && !canManageRoles) {
+    return json({ error: "Only organization admins and managers can assign custom roles." }, 403);
+  }
+  if (payload.custom_role_id && ["admin", "manager"].includes(memberRole)) {
+    return json({ error: "Built-in admin and manager accounts cannot be assigned custom roles." }, 400);
   }
 
   if (isUpdate) {
@@ -112,9 +168,21 @@ async function handleRequest(request: Request): Promise<Response> {
       availability_status: payload.availability_status ?? "available",
       capacity_hours_per_week: payload.capacity_hours_per_week ?? 40,
       max_active_tasks: payload.max_active_tasks ?? 10,
+      custom_role_id: payload.custom_role_id || null,
     }).eq("organization_id", requesterMembership.organization_id).eq("user_id", payload.member_id);
     if (membershipUpdate.error) return json({ error: membershipUpdate.error.message }, 500);
-    return json({ member: { id: payload.member_id, name: memberName, email: memberEmail, role: memberRole, department_id: payload.department_id || null, team_id: payload.team_id || null, availability_status: payload.availability_status ?? "available", capacity_hours_per_week: payload.capacity_hours_per_week ?? 40, max_active_tasks: payload.max_active_tasks ?? 10 } });
+    return json({ member: { id: payload.member_id, name: memberName, email: memberEmail, role: memberRole, custom_role_id: payload.custom_role_id || null, department_id: payload.department_id || null, team_id: payload.team_id || null, availability_status: payload.availability_status ?? "available", capacity_hours_per_week: payload.capacity_hours_per_week ?? 40, max_active_tasks: payload.max_active_tasks ?? 10 } });
+  }
+
+  if (payload.custom_role_id) {
+    const { data: targetRole, error: roleError } = await admin
+      .from("organization_roles")
+      .select("id")
+      .eq("organization_id", requesterMembership.organization_id)
+      .eq("id", payload.custom_role_id)
+      .maybeSingle();
+    if (roleError) return json({ error: roleError.message }, 500);
+    if (!targetRole) return json({ error: "The selected role is not part of this organization." }, 400);
   }
 
   let client: { id: string; name: string; contact_email: string | null } | null = null;
@@ -158,6 +226,7 @@ async function handleRequest(request: Request): Promise<Response> {
     organization_id: requesterMembership.organization_id,
     user_id: createdUser.user.id,
     role: isClient ? "client" : memberRole,
+    custom_role_id: payload.custom_role_id || null,
     department_id: payload.department_id || null,
     team_id: payload.team_id || null,
     availability_status: payload.availability_status ?? "available",
@@ -192,6 +261,7 @@ async function handleRequest(request: Request): Promise<Response> {
       name: profile?.full_name ?? profile?.name ?? memberName,
       email: memberEmail,
       role: isClient ? "client" : memberRole,
+      custom_role_id: payload.custom_role_id || null,
       department_id: payload.department_id || null,
     },
   });

@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -24,6 +25,11 @@ type StockItem = {
   minimum_quantity: number;
   quantity_on_hand: number;
   last_unit_price: number | null;
+};
+
+type StockCategory = {
+  id: string;
+  name: string;
 };
 
 type StockMovement = {
@@ -56,16 +62,20 @@ const formatDate = (value: string) =>
   new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(`${value}T12:00:00`));
 
 const itemFields = "id, item_code, name, category, description, unit, minimum_quantity, quantity_on_hand, last_unit_price";
+const categoryFields = "id, name";
 const movementFields = "id, stock_item_id, movement_type, quantity, ordered_quantity, movement_date, purchase_order, project_number, delivery_note, area, mtc, unit_price, comments";
 
 export default function StockManagement({
   organizationId,
   role,
+  canManageOverride = false,
 }: {
   organizationId: string;
   role: StockRole | null;
+  canManageOverride?: boolean;
 }) {
   const [items, setItems] = useState<StockItem[]>([]);
+  const [categories, setCategories] = useState<StockCategory[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -79,6 +89,8 @@ export default function StockManagement({
   const [itemCode, setItemCode] = useState("");
   const [itemName, setItemName] = useState("");
   const [itemCategory, setItemCategory] = useState("");
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showNewCategory, setShowNewCategory] = useState(false);
   const [itemDescription, setItemDescription] = useState("");
   const [itemUnit, setItemUnit] = useState("pcs");
   const [minimumQuantity, setMinimumQuantity] = useState("0");
@@ -95,20 +107,22 @@ export default function StockManagement({
   const [unitPrice, setUnitPrice] = useState("");
   const [comments, setComments] = useState("");
 
-  const canManage = role === "admin" || role === "manager" || role === "supervisor";
+  const canManage = canManageOverride || role === "admin" || role === "manager" || role === "supervisor";
 
   const loadStock = useCallback(async () => {
     try {
-      const [itemResult, movementResult] = await Promise.all([
+      const [itemResult, movementResult, categoryResult] = await Promise.all([
         supabase.from("stock_items").select(itemFields).eq("organization_id", organizationId).order("name"),
         supabase.from("stock_movements").select(movementFields).eq("organization_id", organizationId).order("movement_date", { ascending: false }).order("created_at", { ascending: false }),
+        supabase.from("stock_categories").select(categoryFields).eq("organization_id", organizationId).order("name"),
       ]);
-      if (itemResult.error || movementResult.error) {
-        setErrorMessage(`Unable to load stock records: ${itemResult.error?.message ?? movementResult.error?.message}`);
+      if (itemResult.error || movementResult.error || categoryResult.error) {
+        setErrorMessage(`Unable to load stock records: ${itemResult.error?.message ?? movementResult.error?.message ?? categoryResult.error?.message}`);
         return false;
       }
       setItems((itemResult.data ?? []) as StockItem[]);
       setMovements((movementResult.data ?? []) as StockMovement[]);
+      setCategories((categoryResult.data ?? []) as StockCategory[]);
       return true;
     } catch (error) {
       setErrorMessage(`Unable to load stock records: ${error instanceof Error ? error.message : "Unexpected network error."}`);
@@ -153,6 +167,8 @@ export default function StockManagement({
     setItemCode("");
     setItemName("");
     setItemCategory("");
+    setNewCategoryName("");
+    setShowNewCategory(false);
     setItemDescription("");
     setItemUnit("pcs");
     setMinimumQuantity("0");
@@ -224,6 +240,71 @@ export default function StockManagement({
     }
   };
 
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    const { data, error } = await supabase.from("stock_categories").insert({
+      organization_id: organizationId,
+      name,
+    }).select(categoryFields).single();
+    if (error) {
+      if (error.code === "23505") {
+        const { data: existing, error: lookupError } = await supabase.from("stock_categories")
+          .select(categoryFields)
+          .eq("organization_id", organizationId)
+          .ilike("name", name)
+          .maybeSingle();
+        if (lookupError) {
+          setErrorMessage(`Category already exists, but could not be selected: ${lookupError.message}`);
+        } else if (existing) {
+          setCategories((current) => [...current.filter((category) => category.id !== existing.id), existing as StockCategory].sort((a, b) => a.name.localeCompare(b.name)));
+          setItemCategory((existing as StockCategory).name);
+          setNewCategoryName("");
+          setShowNewCategory(false);
+          setSuccessMessage("Existing category selected.");
+        }
+      } else {
+        setErrorMessage(`Unable to add category: ${error.message}`);
+      }
+      setSaving(false);
+      return;
+    }
+    if (!data) {
+      setErrorMessage("Unable to add category: no category was returned by the database.");
+      setSaving(false);
+      return;
+    }
+    const category = data as StockCategory;
+    setCategories((current) => [...current, category].sort((a, b) => a.name.localeCompare(b.name)));
+    setItemCategory(category.name);
+    setNewCategoryName("");
+    setShowNewCategory(false);
+    setSuccessMessage(`Category “${category.name}” added and selected.`);
+    setSaving(false);
+  };
+
+  const handleDeleteItem = async (item: StockItem) => {
+    if (!window.confirm(`Delete “${item.name}” (${item.item_code})? Items with remaining stock or movement history cannot be deleted.`)) return;
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    const { error } = await supabase.rpc("delete_stock_item_with_role", {
+      p_organization_id: organizationId,
+      p_stock_item_id: item.id,
+    });
+    if (error) {
+      setErrorMessage(`Unable to delete item: ${error.message}`);
+      setSaving(false);
+      return;
+    }
+    setItems((current) => current.filter((stockItem) => stockItem.id !== item.id));
+    setSuccessMessage("Stock item deleted.");
+    setSaving(false);
+  };
+
   const handleRecordMovement = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!movementItemId) {
@@ -234,7 +315,7 @@ export default function StockManagement({
     setErrorMessage("");
     setSuccessMessage("");
     try {
-      const { error } = await supabase.rpc("record_stock_movement", {
+      const { error } = await supabase.rpc("record_stock_movement_with_role", {
         p_organization_id: organizationId,
         p_stock_item_id: movementItemId,
         p_movement_type: movementType,
@@ -315,7 +396,24 @@ export default function StockManagement({
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <label className="text-xs font-semibold text-slate-600">Item number<input value={itemCode} onChange={(event) => setItemCode(event.target.value)} required maxLength={80} placeholder="e.g. SET-HP-02-01" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
             <label className="text-xs font-semibold text-slate-600">Item name<input value={itemName} onChange={(event) => setItemName(event.target.value)} required maxLength={160} placeholder="e.g. UPN 120 x 6 meter" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
-            <label className="text-xs font-semibold text-slate-600">Category<input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} maxLength={100} placeholder="e.g. Steel materials" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <div className="text-xs font-semibold text-slate-600">
+              <label htmlFor="stock-item-category">Category</label>
+              <div className="mt-1.5 flex gap-2">
+                <select id="stock-item-category" value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400">
+                  <option value="">No category</option>
+                  {categories.map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}
+                </select>
+                <button type="button" onClick={() => { setShowNewCategory((current) => !current); setNewCategoryName(""); }} className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-slate-200 px-2.5 text-xs font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700">
+                  <Plus className="h-3.5 w-3.5" /> Add
+                </button>
+              </div>
+              {showNewCategory && (
+                <div className="mt-2 flex gap-2">
+                  <input value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} required maxLength={100} placeholder="New category name" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" />
+                  <button type="button" onClick={() => void handleAddCategory()} disabled={saving || !newCategoryName.trim()} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{saving ? "Saving…" : "Add category"}</button>
+                </div>
+              )}
+            </div>
             <label className="text-xs font-semibold text-slate-600">Unit<input value={itemUnit} onChange={(event) => setItemUnit(event.target.value)} required maxLength={24} placeholder="pcs, m, kg…" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
             <label className="text-xs font-semibold text-slate-600">Low-stock threshold<input value={minimumQuantity} onChange={(event) => setMinimumQuantity(event.target.value)} required type="number" min="0" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
             <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-1">Description<input value={itemDescription} onChange={(event) => setItemDescription(event.target.value)} maxLength={500} placeholder="Size, material, or specification" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
@@ -412,7 +510,7 @@ export default function StockManagement({
                         <td className="px-4 py-3 text-slate-600">{item.minimum_quantity > 0 ? `${formatQuantity(item.minimum_quantity)} ${item.unit}` : "—"}</td>
                         <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${outOfStock ? "bg-rose-100 text-rose-700" : lowStock ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{outOfStock ? "Out of stock" : lowStock ? "Low stock" : "In stock"}</span></td>
                         <td className="max-w-56 truncate px-4 py-3 text-slate-500" title={item.description}>{item.description || "—"}</td>
-                        {canManage && <td className="px-4 py-3"><button type="button" onClick={() => beginEditItem(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button></td>}
+                        {canManage && <td className="px-4 py-3"><div className="flex items-center gap-1.5"><button type="button" onClick={() => beginEditItem(item)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button><button type="button" onClick={() => void handleDeleteItem(item)} disabled={saving} aria-label={`Delete ${item.name}`} title="Delete is allowed only when the balance is zero and there is no movement history." className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> Delete</button></div></td>}
                       </tr>
                     );
                   })}

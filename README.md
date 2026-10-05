@@ -32,6 +32,33 @@ Internal workspace members can upload files up to 50 MB each, organize files in 
 
 Apply the document-management migration in `supabase/migrations` before using the document library.
 
+## Roles and module access
+
+Migration `20261005160000_module_roles_and_access.sql` adds organization-specific roles with separate View and Manage permissions for each module. Admin accounts retain full access; custom roles are enforced by both the application and Supabase row-level security policies. Apply the migration before deploying the updated web app, then deploy the updated `create-team-member` Edge Function:
+
+```powershell
+supabase db push
+supabase functions deploy create-team-member
+```
+
+Only organization admins and managers can create custom roles or assign them to employee and client accounts. Verify the migration against the target Supabase project before applying it.
+
+If sticky notes report that Supabase could not be reached, check the browser's network connection and the configured Supabase project URL. A failed network request preserves the note draft for retry; it cannot be saved until the browser can reach Supabase.
+
+## Android app
+
+The Android app is a small Capacitor shell that loads the public Rigtech site at `https://rigtech-two.vercel.app`, so web deployments appear without reinstalling the app. An internet connection is required. If the site address changes, update `server.url` in `capacitor.config.ts`.
+
+With Java 17 and the Android SDK installed, build the installable debug APK on Windows. If `ANDROID_HOME` is not already set, point it to your SDK location:
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+npm install
+npm run android:apk
+```
+
+The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. For Android Studio, use `npm run android:open`. The debug APK is for testing and is not release-signed.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

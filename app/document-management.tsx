@@ -53,10 +53,14 @@ const safeFileName = (value: string) =>
 export default function DocumentManagement({
   organizationId,
   role,
+  canManageOverride = false,
+  canDeleteAnyOverride = false,
   projects,
 }: {
   organizationId: string;
   role: DocumentRole | null;
+  canManageOverride?: boolean;
+  canDeleteAnyOverride?: boolean;
   projects: DocumentProject[];
 }) {
   const [folders, setFolders] = useState<DocumentFolder[]>([]);
@@ -73,7 +77,8 @@ export default function DocumentManagement({
   const [uploadProjectId, setUploadProjectId] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
-  const canDeleteAny = role === "admin" || role === "manager" || role === "supervisor";
+  const canManage = canManageOverride || role === "admin" || role === "manager" || role === "supervisor";
+  const canDeleteAny = canDeleteAnyOverride || role === "admin" || role === "manager" || role === "supervisor";
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -259,10 +264,10 @@ export default function DocumentManagement({
           <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900 sm:text-4xl">Documents</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-500">Keep project files and shared documents organized in secure workspace folders.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {canManage && <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => { setMessage(null); setShowCreateFolder((current) => !current); }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-sky-300"><FolderPlus className="h-4 w-4" /> New folder</button>
           <button type="button" onClick={() => { setMessage(null); document.getElementById("document-upload-input")?.click(); }} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"><Upload className="h-4 w-4" /> Upload files</button>
-        </div>
+        </div>}
       </div>
 
       {message && (
@@ -272,7 +277,7 @@ export default function DocumentManagement({
         </div>
       )}
 
-      {showCreateFolder && (
+      {canManage && showCreateFolder && (
         <form onSubmit={handleCreateFolder} className="mb-4 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 sm:flex-row">
           <input value={folderName} onChange={(event) => setFolderName(event.target.value)} required maxLength={80} placeholder="Folder name" className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-sky-400" />
           <button type="submit" disabled={creatingFolder} className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{creatingFolder ? "Creating…" : "Create folder"}</button>
@@ -280,7 +285,7 @@ export default function DocumentManagement({
         </form>
       )}
 
-      <form onSubmit={handleUpload} className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {canManage && <form onSubmit={handleUpload} className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(12rem,0.65fr)_auto] md:items-end">
           <label className="text-xs font-semibold text-slate-600">Files <span className="font-normal text-slate-400">Up to 50 MB each</span>
             <input id="document-upload-input" type="file" multiple onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))} className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-normal text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700" />
@@ -291,7 +296,7 @@ export default function DocumentManagement({
           <button type="submit" disabled={uploadBusy || !selectedFiles.length} className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-4 w-4" /> {uploadBusy ? "Uploading…" : `Upload${selectedFiles.length ? ` ${selectedFiles.length}` : ""}`}</button>
         </div>
         {selectedFiles.length > 0 && <div className="mt-2 text-xs text-slate-500">{selectedFiles.map((file) => file.name).join(", ")}</div>}
-      </form>
+      </form>}
 
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
         <nav aria-label="Document folders" className="flex min-w-0 flex-wrap items-center gap-1 text-sm">

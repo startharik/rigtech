@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, DragOverlay, type DragEndEvent, type DragStartEvent, PointerSensor, closestCenter, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { motion } from "framer-motion";
 import Image from "next/image";
+import { App } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
+import { StatusBar, Style } from "@capacitor/status-bar";
 import {
   ArrowRight,
   BarChart3,
@@ -30,6 +33,8 @@ import {
   Plus,
   Pencil,
   Paperclip,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Share2,
   ShieldCheck,
@@ -78,11 +83,20 @@ type WorkspaceMember = {
   name: string;
   email: string;
   role: "admin" | "manager" | "supervisor" | "employee" | "client";
+  customRoleId: string | null;
   departmentId: string | null;
   teamId: string | null;
   availabilityStatus: "available" | "limited" | "unavailable" | "leave";
   capacityHoursPerWeek: number;
   maxActiveTasks: number;
+};
+
+type ModuleAccess = { view: boolean; manage: boolean };
+type WorkspaceRole = {
+  id: string;
+  name: string;
+  description: string;
+  permissions: Record<string, ModuleAccess>;
 };
 
 type WorkspaceTeam = {
@@ -95,6 +109,8 @@ type WorkspaceClient = {
   id: string;
   name: string;
   contactEmail: string | null;
+  userId: string | null;
+  customRoleId: string | null;
 };
 
 type WorkspaceDepartment = {
@@ -230,6 +246,67 @@ const navItems = [
   { label: "Sticky notes", id: "notes", icon: StickyNote },
   { label: "Settings", id: "settings", icon: ShieldCheck },
 ] as const;
+type WorkspaceView = (typeof navItems)[number]["id"];
+const roleModules = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "executive", label: "Executive overview" },
+  { id: "tasks", label: "Tasks" },
+  { id: "projects", label: "Projects" },
+  { id: "stock", label: "Stock management" },
+  { id: "documents", label: "Documents" },
+  { id: "team", label: "Employees and roles" },
+  { id: "clients", label: "Clients" },
+  { id: "departments", label: "Departments" },
+  { id: "notifications", label: "Notifications" },
+  { id: "notes", label: "Sticky notes" },
+  { id: "settings", label: "Settings" },
+] as const;
+const navGroups = [
+  { id: "overview", label: "OVERVIEW", views: ["dashboard", "executive"] },
+  { id: "work", label: "WORKSPACE", views: ["my-tasks", "all-tasks", "projects"] },
+  { id: "operations", label: "OPERATIONS", views: ["stock", "documents"] },
+  { id: "people", label: "PEOPLE", views: ["team", "clients", "departments"] },
+  { id: "personal", label: "PERSONAL", views: ["notifications", "notes", "settings"] },
+] as const;
+
+const isWorkspaceView = (value: unknown): value is WorkspaceView =>
+  navItems.some(({ id }) => id === value);
+
+const viewModule = (view: WorkspaceView) =>
+  view === "my-tasks" || view === "all-tasks" ? "tasks" : view;
+
+const defaultModuleAccess = (
+  role: WorkspaceMember["role"] | null,
+  module: string,
+): ModuleAccess => {
+  const canView = role === "admin" || role === "manager" || role === "supervisor" || role === "employee"
+    ? true
+    : role === "client" && ["dashboard", "tasks", "projects", "notifications"].includes(module);
+  const canManage = role === "admin"
+    || (role === "manager" && ["tasks", "projects", "stock", "documents", "team", "clients", "departments", "notes", "settings", "notifications"].includes(module))
+    || (role === "supervisor" && ["tasks", "stock", "documents", "notes"].includes(module))
+    || (role === "employee" && ["tasks", "documents", "notes", "notifications"].includes(module));
+  return { view: canView, manage: canManage };
+};
+
+const parseRolePermissions = (value: unknown): Record<string, ModuleAccess> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([module, permission]) => {
+    if (!permission || typeof permission !== "object" || Array.isArray(permission)) return [];
+    const access = permission as { view?: unknown; manage?: unknown };
+    return [[module, { view: access.view === true, manage: access.manage === true }]];
+  }));
+};
+
+const roleCanView = (
+  role: WorkspaceMember["role"] | null,
+  assignedRole: WorkspaceRole | undefined,
+  targetView: WorkspaceView,
+) => {
+  if (role === "admin") return true;
+  const access = assignedRole?.permissions[viewModule(targetView)] ?? defaultModuleAccess(role, viewModule(targetView));
+  return access.view || access.manage;
+};
 
 const activity: Array<{ initials: string; tone: string; text: string; item: string; time: string }> = [];
 const teamOverview: Array<{ name: string; active: number; value: number; tone: string }> = [];
@@ -513,12 +590,14 @@ const toTaskPriority = (priority: unknown): TaskPriority =>
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [view, setView] = useState<(typeof navItems)[number]["id"]>("dashboard");
+  const [view, setView] = useState<WorkspaceView>("dashboard");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [collapsedNavGroups, setCollapsedNavGroups] = useState<string[]>([]);
   const [syncMessage, setSyncMessage] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -546,6 +625,7 @@ export default function Home() {
   const [managementEmail, setManagementEmail] = useState("");
   const [managementPassword, setManagementPassword] = useState("");
   const [managementRole, setManagementRole] = useState<WorkspaceMember["role"]>("employee");
+  const [managementCustomRoleId, setManagementCustomRoleId] = useState("");
   const [managementDepartmentId, setManagementDepartmentId] = useState("");
   const [managementTeamId, setManagementTeamId] = useState("");
   const [managementAvailability, setManagementAvailability] = useState<WorkspaceMember["availabilityStatus"]>("available");
@@ -556,6 +636,13 @@ export default function Home() {
   const [organizationName, setOrganizationName] = useState("");
   const [organizationWebsite, setOrganizationWebsite] = useState("");
   const [organizationTimezone, setOrganizationTimezone] = useState("UTC");
+  const [workspaceRoles, setWorkspaceRoles] = useState<WorkspaceRole[]>([]);
+  const [currentCustomRoleId, setCurrentCustomRoleId] = useState<string | null>(null);
+  const [roleName, setRoleName] = useState("");
+  const [roleDescription, setRoleDescription] = useState("");
+  const [rolePermissions, setRolePermissions] = useState<Record<string, ModuleAccess>>({});
+  const [editingWorkspaceRoleId, setEditingWorkspaceRoleId] = useState<string | null>(null);
+  const [roleBusy, setRoleBusy] = useState(false);
   const [needsOrganization, setNeedsOrganization] = useState(false);
   const [editingMember, setEditingMember] = useState<WorkspaceMember | null>(null);
   const [comments, setComments] = useState<TaskComment[]>([]);
@@ -573,6 +660,7 @@ export default function Home() {
   const [titleBusy, setTitleBusy] = useState(false);
   const [activeKanbanTask, setActiveKanbanTask] = useState<Task | null>(null);
   const [currentTime] = useState(() => Date.now());
+  const localIdCounter = useRef(currentTime);
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [attachmentRetry, setAttachmentRetry] = useState<File | null>(null);
@@ -581,6 +669,9 @@ export default function Home() {
   const [noteTitle, setNoteTitle] = useState("");
   const [noteBody, setNoteBody] = useState("");
   const [noteColor, setNoteColor] = useState<WorkspaceNote["color"]>("yellow");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteSearch, setNoteSearch] = useState("");
+  const [noteColorFilter, setNoteColorFilter] = useState<WorkspaceNote["color"] | "all">("all");
   const [noteBusy, setNoteBusy] = useState(false);
   const [sharingNote, setSharingNote] = useState<WorkspaceNote | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
@@ -590,6 +681,64 @@ export default function Home() {
   const [darkMode, setDarkMode] = useState(() => typeof window !== "undefined" && localStorage.getItem("rigtech:dark-mode") === "true");
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const nextLocalId = () => {
+    localIdCounter.current += 1;
+    return localIdCounter.current;
+  };
+  const currentCustomRole = workspaceRoles.find((role) => role.id === currentCustomRoleId);
+  const moduleAccess = (module: string): ModuleAccess =>
+    currentCustomRole?.permissions[module] ?? defaultModuleAccess(currentRole, module);
+  const canViewModule = (module: string) => moduleAccess(module).view || moduleAccess(module).manage;
+  const canManageModule = (module: string) => moduleAccess(module).manage;
+  const canAssignCustomRoles = currentRole === "admin" || currentRole === "manager";
+  const canView = (targetView: WorkspaceView) => canViewModule(viewModule(targetView));
+  const visibleNavItems = navItems.filter(({ id }) => canView(id));
+
+  useEffect(() => {
+    const restoreView = (event: PopStateEvent) => {
+      const nextView = isWorkspaceView(event.state?.rigtechView) ? event.state.rigtechView : "dashboard";
+      if (roleCanView(currentRole, workspaceRoles.find((role) => role.id === currentCustomRoleId), nextView)) setView(nextView);
+      else setSyncMessage("Your workspace role does not allow access to that module.");
+      setMobileNavOpen(false);
+    };
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, [currentRole, currentCustomRoleId, workspaceRoles]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let mounted = true;
+    let removeBackListener: (() => void) | undefined;
+    void App.addListener("backButton", ({ canGoBack }) => {
+      if (canGoBack) {
+        window.history.back();
+      } else {
+        App.exitApp();
+      }
+    }).then((listener) => {
+      if (mounted) {
+        removeBackListener = () => void listener.remove();
+      } else {
+        void listener.remove();
+      }
+    }).catch((error: unknown) => {
+      console.error("Unable to register Android back-button handling.", error);
+    });
+
+    void Promise.all([
+      StatusBar.setOverlaysWebView({ overlay: false }),
+      StatusBar.setBackgroundColor({ color: "#f4f7f5" }),
+      StatusBar.setStyle({ style: Style.Dark }),
+    ]).catch((error: unknown) => {
+      console.error("Unable to configure the Android status bar.", error);
+    });
+
+    return () => {
+      mounted = false;
+      removeBackListener?.();
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -608,6 +757,11 @@ export default function Home() {
       if (!session) {
         setTasks([]);
         setOrganizationId(null);
+        setCurrentRole(null);
+        setCurrentCustomRoleId(null);
+        setWorkspaceRoles([]);
+        setMembers([]);
+        setClients([]);
       }
     });
 
@@ -645,34 +799,41 @@ export default function Home() {
   useEffect(() => {
     if (!user || !organizationId) return;
     const loadNotes = async () => {
-      const { data, error } = await supabase
-        .from("notes")
-        .select("id, title, body, color, author_id, created_at, updated_at")
-        .eq("organization_id", organizationId)
-        .order("updated_at", { ascending: false });
-      if (error) {
-        setSyncMessage(`Unable to load sticky notes: ${error.message}`);
-        return;
+      try {
+        const { data, error } = await supabase
+          .from("notes")
+          .select("id, title, body, color, author_id, created_at, updated_at")
+          .eq("organization_id", organizationId)
+          .order("updated_at", { ascending: false });
+        if (error) {
+          setSyncMessage(`Unable to load sticky notes: ${error.message}`);
+          return;
+        }
+        const authorIds = [...new Set((data ?? []).map((note) => note.author_id))];
+        const { data: profiles, error: profilesError } = authorIds.length
+          ? await supabase.from("profiles").select("id, full_name, name").in("id", authorIds)
+          : { data: [], error: null };
+        if (profilesError) {
+          setSyncMessage(`Unable to load note authors: ${profilesError.message}`);
+          return;
+        }
+        const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+        setNotes((data ?? []).map((note) => ({
+          id: note.id,
+          title: note.title ?? "",
+          body: note.body ?? "",
+          color: (note.color ?? "yellow") as WorkspaceNote["color"],
+          authorId: note.author_id,
+          authorName: profileById.get(note.author_id)?.full_name ?? profileById.get(note.author_id)?.name ?? "Workspace member",
+          createdAt: note.created_at,
+          updatedAt: note.updated_at,
+        })));
+      } catch (error) {
+        console.error("Unable to reach Supabase while loading sticky notes.", error);
+        setSyncMessage(error instanceof TypeError && error.message.toLowerCase().includes("fetch")
+          ? "Unable to reach Supabase while loading sticky notes. Check your internet connection and retry."
+          : `Unable to load sticky notes: ${error instanceof Error ? error.message : "Unexpected network error."}`);
       }
-      const authorIds = [...new Set((data ?? []).map((note) => note.author_id))];
-      const { data: profiles, error: profilesError } = authorIds.length
-        ? await supabase.from("profiles").select("id, full_name, name").in("id", authorIds)
-        : { data: [], error: null };
-      if (profilesError) {
-        setSyncMessage(`Unable to load note authors: ${profilesError.message}`);
-        return;
-      }
-      const profileById = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
-      setNotes((data ?? []).map((note) => ({
-        id: note.id,
-        title: note.title ?? "",
-        body: note.body ?? "",
-        color: (note.color ?? "yellow") as WorkspaceNote["color"],
-        authorId: note.author_id,
-        authorName: profileById.get(note.author_id)?.full_name ?? profileById.get(note.author_id)?.name ?? "Workspace member",
-        createdAt: note.created_at,
-        updatedAt: note.updated_at,
-      })));
     };
     void loadNotes();
   }, [user, organizationId]);
@@ -695,7 +856,7 @@ export default function Home() {
       try {
         const { data: membership, error: membershipError } = await supabase
           .from("organization_members")
-          .select("organization_id, role")
+          .select("organization_id, role, custom_role_id")
           .eq("user_id", user.id)
           .limit(1)
           .maybeSingle();
@@ -710,9 +871,29 @@ export default function Home() {
         setNeedsOrganization(false);
         setOrganizationId(membership.organization_id);
         setCurrentRole(membership.role);
+        setCurrentCustomRoleId(membership.custom_role_id ?? null);
+        const { data: roleRows, error: rolesError } = await supabase
+          .from("organization_roles")
+          .select("id, name, description, permissions")
+          .eq("organization_id", membership.organization_id)
+          .order("name");
+        if (rolesError) throw new Error(`Workspace role lookup failed: ${rolesError.message}`);
+        const loadedRoles = (roleRows ?? []).map((role) => ({
+          id: role.id,
+          name: role.name,
+          description: role.description,
+          permissions: parseRolePermissions(role.permissions),
+        }));
+        setWorkspaceRoles(loadedRoles);
+        const assignedRole = loadedRoles.find((role) => role.id === membership.custom_role_id);
+        const requestedView = new URLSearchParams(window.location.search).get("view");
+        const nextView = isWorkspaceView(requestedView) && roleCanView(membership.role, assignedRole, requestedView)
+          ? requestedView
+          : navItems.find(({ id }) => roleCanView(membership.role, assignedRole, id))?.id ?? "dashboard";
+        setView(nextView);
         const memberResult = await supabase
           .from("organization_members")
-          .select("user_id, department_id, team_id, role, availability_status, capacity_hours_per_week, max_active_tasks")
+          .select("user_id, department_id, team_id, role, custom_role_id, availability_status, capacity_hours_per_week, max_active_tasks")
           .eq("organization_id", membership.organization_id)
           .neq("role", "client");
         const legacyMemberResult = memberResult.error && /(team_id|availability_status|capacity_hours_per_week|max_active_tasks)/.test(memberResult.error.message)
@@ -727,6 +908,7 @@ export default function Home() {
           department_id: string | null;
           team_id?: string | null;
           role: WorkspaceMember["role"];
+          custom_role_id?: string | null;
           availability_status?: WorkspaceMember["availabilityStatus"];
           capacity_hours_per_week?: number;
           max_active_tasks?: number;
@@ -738,16 +920,20 @@ export default function Home() {
           : null;
         const organizationRow = (legacyOrganizationResult?.data ?? organizationResult.data) as { name: string; website?: string | null; timezone?: string | null } | null;
         const organizationError = legacyOrganizationResult?.error ?? organizationResult.error;
-        const [{ data, error }, { data: clientRows, error: clientsError }, { data: departmentRows, error: departmentsError }, { data: teamRows, error: teamsError }, { data: projectRows, error: projectsError }] = await Promise.all([
+        const [{ data, error }, { data: clientRows, error: clientsError }, { data: departmentRows, error: departmentsError }, { data: teamRows, error: teamsError }, { data: projectRows, error: projectsError }, { data: clientUserRows, error: clientUsersError }, { data: clientRoleRows, error: clientRolesError }] = await Promise.all([
           supabase.from("task_tree").select("*").eq("organization_id", membership.organization_id).order("created_at", { ascending: false }).limit(50),
           supabase.from("clients").select("id, name, contact_email").eq("organization_id", membership.organization_id).order("name"),
           supabase.from("departments").select("id, name").eq("organization_id", membership.organization_id).order("name"),
           supabase.from("teams").select("id, name, department_id").eq("organization_id", membership.organization_id).order("name"),
           supabase.from("projects").select("id, name, description, client_id, status, start_date, target_date, created_at").eq("organization_id", membership.organization_id).order("name"),
+          supabase.from("client_users").select("client_id, user_id"),
+          supabase.from("organization_members").select("user_id, custom_role_id").eq("organization_id", membership.organization_id).eq("role", "client"),
         ]);
         if (error) throw new Error(`Task lookup failed: ${error.message}`);
         if (membersError) throw new Error(`Member lookup failed: ${membersError.message}`);
         if (clientsError) throw new Error(`Client lookup failed: ${clientsError.message}`);
+        if (clientUsersError) throw new Error(`Client login lookup failed: ${clientUsersError.message}`);
+        if (clientRolesError) throw new Error(`Client role lookup failed: ${clientRolesError.message}`);
         if (departmentsError) throw new Error(`Department lookup failed: ${departmentsError.message}`);
         if (teamsError) throw new Error(`Team lookup failed: ${teamsError.message}`);
         if (organizationError) throw new Error(`Organization lookup failed: ${organizationError.message}`);
@@ -769,6 +955,7 @@ export default function Home() {
               name: profile?.full_name ?? profile?.name ?? "Workspace member",
               email: profile?.email ?? "",
               role: row.role,
+              customRoleId: row.custom_role_id ?? null,
               departmentId: row.department_id,
               teamId: row.team_id ?? null,
               availabilityStatus: row.availability_status ?? "available",
@@ -779,7 +966,18 @@ export default function Home() {
         } else {
           setMembers([]);
         }
-        setClients((clientRows ?? []).map((client) => ({ id: client.id, name: client.name, contactEmail: client.contact_email })));
+        const clientUserByClient = new Map((clientUserRows ?? []).map((row) => [row.client_id, row.user_id]));
+        const clientRoleByUser = new Map((clientRoleRows ?? []).map((row) => [row.user_id, row.custom_role_id]));
+        setClients((clientRows ?? []).map((client) => {
+          const clientUserId = clientUserByClient.get(client.id) ?? null;
+          return {
+            id: client.id,
+            name: client.name,
+            contactEmail: client.contact_email,
+            userId: clientUserId,
+            customRoleId: clientUserId ? clientRoleByUser.get(clientUserId) ?? null : null,
+          };
+        }));
         setDepartments((departmentRows ?? []).map((department) => ({ id: department.id, name: department.name })));
         setTeams((teamRows ?? []).map((team) => ({ id: team.id, name: team.name, departmentId: team.department_id })));
         setProjects((projectRows ?? []).map((project) => ({ id: project.id, name: project.name, description: project.description, clientId: project.client_id, status: project.status, startDate: project.start_date, targetDate: project.target_date, createdAt: project.created_at })));
@@ -814,7 +1012,7 @@ export default function Home() {
         });
         const toSubtasks = (parentId: string): TaskSubtask[] =>
           (childrenByParent.get(parentId) ?? []).map((child) => ({
-            id: Number(String(child.id).replaceAll("-", "").slice(0, 8)) || Date.now(),
+            id: Number(String(child.id).replaceAll("-", "").slice(0, 8)) || nextLocalId(),
             supabaseId: String(child.id),
             title: String(child.title ?? "Untitled subtask"),
             description: String(child.description ?? ""),
@@ -973,6 +1171,14 @@ export default function Home() {
       return matchesSearch && matchesStatus && matchesPriority;
     });
   }, [tasks, searchTerm, statusFilter, priorityFilter]);
+
+  const filteredNotes = useMemo(() => {
+    const query = noteSearch.trim().toLowerCase();
+    return notes.filter((note) =>
+      (noteColorFilter === "all" || note.color === noteColorFilter) &&
+      (!query || `${note.title} ${note.body} ${note.authorName}`.toLowerCase().includes(query)),
+    );
+  }, [notes, noteSearch, noteColorFilter]);
 
   const openProjectDetails = async (project: WorkspaceProject) => {
     setProjectDetailBusy(true);
@@ -1154,6 +1360,7 @@ export default function Home() {
   };
 
   const handleTaskStatusChange = async (task: Task, status: TaskStatus) => {
+    if (!canManageModule("tasks")) return;
     const databaseStatus = status === "In progress" ? "in_progress" : status === "Completed" ? "completed" : status === "Waiting" ? "waiting" : "to_do";
     if (!navigator.onLine) {
       const queueKey = `rigtech:task-updates:${user?.id ?? "anonymous"}`;
@@ -1223,6 +1430,7 @@ export default function Home() {
       : { ...item, children: addSubtaskToTree(item.children, parentId, child) });
 
   const handleSubtaskStatusChange = async (subtask: TaskSubtask) => {
+    if (!canManageModule("tasks")) return;
     const completed = !subtask.completed;
     const { error } = await supabase.from("tasks").update({
       status: completed ? "completed" : "to_do",
@@ -1291,7 +1499,7 @@ export default function Home() {
 
   const handleTaskTitleSave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedTask || !titleDraft.trim() || titleDraft.trim() === selectedTask.title) return;
+    if (!canManageModule("tasks") || !selectedTask || !titleDraft.trim() || titleDraft.trim() === selectedTask.title) return;
     setTitleBusy(true);
     const title = titleDraft.trim();
     const { error } = await supabase.from("tasks").update({ title }).eq("id", selectedTask.supabaseId);
@@ -1306,6 +1514,7 @@ export default function Home() {
   };
 
   const handleSubtaskDescriptionSave = async (subtask: TaskSubtask, description: string) => {
+    if (!canManageModule("tasks")) return;
     const nextDescription = description.trim();
     const { error } = await supabase.from("tasks").update({ description: nextDescription }).eq("id", subtask.supabaseId);
     if (error) {
@@ -1322,6 +1531,7 @@ export default function Home() {
 
   const handleCreateTask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canManageModule("tasks")) return;
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
     if (!title) return;
@@ -1329,7 +1539,7 @@ export default function Home() {
     const assigneeIds = [...new Set(form.getAll("assignee_ids").map(String).filter(Boolean))];
     const primaryAssigneeId = assigneeIds[0] ?? "";
     const nextTask: Task = {
-      id: Date.now(),
+      id: nextLocalId(),
       supabaseId: "",
       title,
       project: projects.find((project) => project.id === String(form.get("project_id") ?? ""))?.name ?? "Standalone task",
@@ -1411,7 +1621,7 @@ export default function Home() {
         break;
       }
       createdSubtasks.push({
-        id: Date.now() + createdSubtasks.length,
+        id: nextLocalId(),
         supabaseId: createdSubtask.id,
         title: subtask,
         description: "",
@@ -1438,7 +1648,7 @@ export default function Home() {
     }
     openTask(savedTask);
     setShowCreate(false);
-    setView("my-tasks");
+    handleViewChange("my-tasks");
     setNewSubtasks([]);
     setNewSubtaskTitle("");
     event.currentTarget.reset();
@@ -1446,6 +1656,7 @@ export default function Home() {
 
   const handleCreateSubtask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canManageModule("tasks")) return;
     if (!selectedTask || !user || !organizationId || !subtaskTitle.trim()) return;
     setSubtaskBusy(true);
     const title = subtaskTitle.trim();
@@ -1469,7 +1680,7 @@ export default function Home() {
     if (error || !data) {
       setSyncMessage(`Unable to create subtask: ${error?.message ?? "Unknown error"}`);
     } else {
-      const child = { id: Date.now(), supabaseId: data.id, title, description: subtaskDescription.trim(), completed: false, children: [] };
+      const child = { id: nextLocalId(), supabaseId: data.id, title, description: subtaskDescription.trim(), completed: false, children: [] };
       setSelectedTask((current) => current ? {
         ...current,
         subtasks: parentId === current.supabaseId ? [...current.subtasks, child] : addSubtaskToTree(current.subtasks, parentId, child),
@@ -1488,6 +1699,7 @@ export default function Home() {
 
   const handleAddComment = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!canManageModule("tasks")) return;
     if (!selectedTask || !user || !commentBody.trim()) return;
     const body = commentBody.trim();
     const { data, error } = await supabase.from("comments").insert({
@@ -1592,6 +1804,7 @@ export default function Home() {
     setManagementEmail("");
     setManagementPassword("");
     setManagementRole("employee");
+    setManagementCustomRoleId("");
     setManagementDepartmentId("");
     setManagementTeamId("");
     setManagementAvailability("available");
@@ -1604,6 +1817,7 @@ export default function Home() {
     setManagementMemberName(member.name);
     setManagementEmail(member.email);
     setManagementRole(member.role);
+    setManagementCustomRoleId(member.customRoleId ?? "");
     setManagementDepartmentId(member.departmentId ?? "");
     setManagementTeamId(member.teamId ?? "");
     setManagementAvailability(member.availabilityStatus);
@@ -1615,7 +1829,7 @@ export default function Home() {
 
   const handleSaveMember = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editingMember || currentRole === "client") return;
+    if (!editingMember || !canManageModule("team")) return;
     setManagementBusy(true);
     setSyncMessage("");
     const result = await supabase.functions.invoke("create-team-member", {
@@ -1626,6 +1840,7 @@ export default function Home() {
         member_email: managementEmail.trim(),
         member_password: managementPassword.trim() || undefined,
         role: managementRole,
+        ...(canAssignCustomRoles ? { custom_role_id: managementCustomRoleId || null } : {}),
         department_id: managementDepartmentId || null,
         team_id: managementTeamId || null,
         availability_status: managementAvailability,
@@ -1645,12 +1860,13 @@ export default function Home() {
     if (error) {
       setSyncMessage(`Unable to update employee: ${error}`);
     } else if (result.data?.member) {
-      const updatedMember = result.data.member as WorkspaceMember & { department_id: string | null; team_id?: string | null; availability_status?: WorkspaceMember["availabilityStatus"]; capacity_hours_per_week?: number; max_active_tasks?: number };
+      const updatedMember = result.data.member as WorkspaceMember & { custom_role_id?: string | null; department_id: string | null; team_id?: string | null; availability_status?: WorkspaceMember["availabilityStatus"]; capacity_hours_per_week?: number; max_active_tasks?: number };
       setMembers((current) => current.map((member) => member.id === updatedMember.id ? {
         ...member,
         name: updatedMember.name,
         email: updatedMember.email,
         role: updatedMember.role,
+        customRoleId: updatedMember.custom_role_id ?? null,
         departmentId: updatedMember.department_id,
         teamId: updatedMember.team_id ?? member.teamId,
         availabilityStatus: updatedMember.availability_status ?? member.availabilityStatus,
@@ -1666,7 +1882,7 @@ export default function Home() {
 
   const handleManagementSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!organizationId || !managementName.trim() || currentRole === "client") return;
+    if (!organizationId || !managementName.trim() || !canManageModule(view)) return;
 
     setManagementBusy(true);
     setSyncMessage("");
@@ -1705,6 +1921,7 @@ export default function Home() {
           member_email: managementEmail.trim(),
           member_password: managementPassword,
           role: managementRole,
+          custom_role_id: managementCustomRoleId || null,
         },
       });
       if (result.error) {
@@ -1726,6 +1943,7 @@ export default function Home() {
           name: result.data.member.name,
           email: result.data.member.email,
           role: result.data.member.role,
+          customRoleId: result.data.member.custom_role_id ?? null,
           departmentId: result.data.member.department_id,
           teamId: result.data.member.team_id ?? null,
           availabilityStatus: result.data.member.availability_status ?? "available",
@@ -1747,6 +1965,7 @@ export default function Home() {
           member_name: name,
           member_email: managementEmail.trim(),
           member_password: managementPassword,
+          custom_role_id: managementCustomRoleId || null,
         },
       });
       if (result.error) {
@@ -1767,6 +1986,8 @@ export default function Home() {
           id: result.data.client.id,
           name: result.data.client.name,
           contactEmail: result.data.client.contact_email,
+          userId: result.data.member?.id ?? null,
+          customRoleId: result.data.member?.custom_role_id ?? null,
         }].sort((a, b) => a.name.localeCompare(b.name)));
       }
     }
@@ -1830,39 +2051,166 @@ export default function Home() {
     setSettingsBusy(false);
   };
 
+  const resetRoleEditor = () => {
+    setEditingWorkspaceRoleId(null);
+    setRoleName("");
+    setRoleDescription("");
+    setRolePermissions({});
+  };
+
+  const handleSaveWorkspaceRole = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!organizationId || !roleName.trim() || !canManageModule("team")) return;
+    setRoleBusy(true);
+    setSyncMessage("");
+    const rolePayload = {
+      name: roleName.trim(),
+      description: roleDescription.trim(),
+      permissions: Object.fromEntries(roleModules.map(({ id }) => {
+        const access = rolePermissions[id] ?? { view: false, manage: false };
+        return [id, { view: access.view || access.manage, manage: access.manage }];
+      })),
+    };
+    const result = editingWorkspaceRoleId
+      ? await supabase.from("organization_roles").update(rolePayload).eq("id", editingWorkspaceRoleId)
+        .select("id, name, description, permissions").single()
+      : await supabase.from("organization_roles").insert({ ...rolePayload, organization_id: organizationId })
+        .select("id, name, description, permissions").single();
+    if (result.error || !result.data) {
+      setSyncMessage(`Unable to save role: ${result.error?.message ?? "Supabase returned no role."}`);
+    } else {
+      const savedRole: WorkspaceRole = {
+        id: result.data.id,
+        name: result.data.name,
+        description: result.data.description,
+        permissions: rolePayload.permissions,
+      };
+      setWorkspaceRoles((current) => [
+        ...current.filter((role) => role.id !== savedRole.id),
+        savedRole,
+      ].sort((a, b) => a.name.localeCompare(b.name)));
+      resetRoleEditor();
+      setSyncMessage("Workspace role saved.");
+    }
+    setRoleBusy(false);
+  };
+
+  const handleEditWorkspaceRole = (role: WorkspaceRole) => {
+    setEditingWorkspaceRoleId(role.id);
+    setRoleName(role.name);
+    setRoleDescription(role.description);
+    setRolePermissions(role.permissions);
+  };
+
+  const handleDeleteWorkspaceRole = async (role: WorkspaceRole) => {
+    if (!canManageModule("team")) return;
+    const { error } = await supabase.from("organization_roles").delete().eq("id", role.id);
+    if (error) {
+      setSyncMessage(`Unable to delete role: ${error.message}`);
+      return;
+    }
+    setWorkspaceRoles((current) => current.filter((item) => item.id !== role.id));
+    setMembers((current) => current.map((member) => member.customRoleId === role.id ? { ...member, customRoleId: null } : member));
+    setSyncMessage(`Role "${role.name}" deleted. Current assignments were returned to their built-in roles.`);
+  };
+
+  const handleAssignCustomRole = async (memberId: string, customRoleId: string) => {
+    if (!canManageModule("team")) return;
+    const { error } = await supabase.functions.invoke("create-team-member", {
+      body: { mode: "assign-role", member_id: memberId, custom_role_id: customRoleId || null },
+    });
+    if (error) {
+      setSyncMessage(`Unable to assign workspace role: ${error.message}`);
+      return;
+    }
+    setMembers((current) => current.map((member) => member.id === memberId
+      ? { ...member, customRoleId: customRoleId || null }
+      : member));
+    setClients((current) => current.map((client) => client.userId === memberId
+      ? { ...client, customRoleId: customRoleId || null }
+      : client));
+    setSyncMessage("Workspace role assigned.");
+  };
+
   const handleCreateNote = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!user || !organizationId || !noteBody.trim()) return;
     setNoteBusy(true);
-    const { data, error } = await supabase.from("notes").insert({
-      organization_id: organizationId,
-      author_id: user.id,
-      title: noteTitle.trim(),
-      body: noteBody.trim(),
-      color: noteColor,
-    }).select("id, title, body, color, author_id, created_at, updated_at").single();
-    if (error || !data) {
-      setSyncMessage(`Unable to save sticky note: ${error?.message ?? "Unknown error"}`);
-    } else {
-      setNotes((current) => [{
+    try {
+      const result = editingNoteId
+        ? await supabase.from("notes").update({
+          title: noteTitle.trim(),
+          body: noteBody.trim(),
+          color: noteColor,
+        }).eq("id", editingNoteId).select("id, title, body, color, author_id, created_at, updated_at").single()
+        : await supabase.from("notes").insert({
+          organization_id: organizationId,
+          author_id: user.id,
+          title: noteTitle.trim(),
+          body: noteBody.trim(),
+          color: noteColor,
+        }).select("id, title, body, color, author_id, created_at, updated_at").single();
+      const { data, error } = result;
+      if (error || !data) {
+        setSyncMessage(`Unable to save sticky note: ${error?.message ?? "Supabase returned no note."}`);
+        return;
+      }
+      const savedNote: WorkspaceNote = {
         id: data.id,
         title: data.title,
         body: data.body,
         color: data.color as WorkspaceNote["color"],
         authorId: data.author_id,
-        authorName: userName,
+        authorName: notes.find((note) => note.id === data.id)?.authorName ?? userName,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
-      }, ...current]);
+      };
+      setNotes((current) => editingNoteId
+        ? current.map((note) => note.id === savedNote.id ? savedNote : note).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        : [savedNote, ...current]);
       setNoteTitle("");
       setNoteBody("");
       setNoteColor("yellow");
-      setSyncMessage("Sticky note saved.");
+      setEditingNoteId(null);
+      setSyncMessage(editingNoteId ? "Sticky note updated." : "Sticky note saved.");
+    } catch (error) {
+      console.error("Unable to reach Supabase while saving a sticky note.", error);
+      setSyncMessage(error instanceof TypeError && error.message.toLowerCase().includes("fetch")
+        ? "Unable to reach Supabase. Check your internet connection and try again; your note is still in the editor."
+        : `Unable to save sticky note: ${error instanceof Error ? error.message : "Unexpected network error."}`);
+    } finally {
+      setNoteBusy(false);
     }
-    setNoteBusy(false);
+  };
+
+  const startEditingNote = (note: WorkspaceNote) => {
+    setEditingNoteId(note.id);
+    setNoteTitle(note.title);
+    setNoteBody(note.body);
+    setNoteColor(note.color);
+    setSyncMessage("");
+    document.getElementById("sticky-note-composer")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const handleNoteColorChange = async (note: WorkspaceNote, color: WorkspaceNote["color"]) => {
+    if (!canManageModule("notes") || note.authorId !== user?.id || note.color === color) return;
+    const { data, error } = await supabase.from("notes").update({ color })
+      .eq("id", note.id)
+      .select("id, title, body, color, author_id, created_at, updated_at")
+      .single();
+    if (error || !data) {
+      setSyncMessage(`Unable to update sticky note color: ${error?.message ?? "Unknown error"}`);
+      return;
+    }
+    setNotes((current) => current.map((item) => item.id === note.id ? {
+      ...item,
+      color: data.color as WorkspaceNote["color"],
+      updatedAt: data.updated_at,
+    } : item).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   };
 
   const handleDeleteNote = async (note: WorkspaceNote) => {
+    if (!canManageModule("notes") || note.authorId !== user?.id) return;
     const { error } = await supabase.from("notes").delete().eq("id", note.id);
     if (error) {
       setSyncMessage(`Unable to delete sticky note: ${error.message}`);
@@ -1874,7 +2222,7 @@ export default function Home() {
   };
 
   const handleShareInternally = async (note: WorkspaceNote, recipient: WorkspaceMember) => {
-    if (!user) return;
+    if (!user || !canManageModule("notes") || note.authorId !== user.id) return;
     setShareBusy(true);
     const { error } = await supabase.from("note_shares").upsert({
       note_id: note.id,
@@ -1932,10 +2280,62 @@ export default function Home() {
                   : view === "notes"
                     ? "Sticky notes"
                   : "Settings";
-  const handleViewChange = (nextView: (typeof navItems)[number]["id"]) => {
+  const handleViewChange = (nextView: WorkspaceView) => {
+    if (!canView(nextView)) {
+      setSyncMessage("Your workspace role does not allow access to that module.");
+      setMobileNavOpen(false);
+      return;
+    }
+    if (nextView !== view) {
+      window.history.pushState({ rigtechView: nextView }, "");
+    }
     setView(nextView);
     setMobileNavOpen(false);
   };
+  const toggleNavGroup = (groupId: string) => {
+    setCollapsedNavGroups((current) => current.includes(groupId)
+      ? current.filter((id) => id !== groupId)
+      : [...current, groupId]);
+  };
+  const renderGroupedNavigation = (mobile = false) => navGroups.map((group) => {
+    const items = navItems.filter(({ id }) => (group.views as readonly string[]).includes(id) && canView(id));
+    if (!items.length) return null;
+    const isCollapsed = collapsedNavGroups.includes(group.id);
+    return (
+      <div key={group.id} className={mobile ? "mb-2" : "mb-3"}>
+        {!sidebarCollapsed || mobile ? (
+          <button
+            type="button"
+            onClick={() => toggleNavGroup(group.id)}
+            aria-expanded={!isCollapsed}
+            className="mb-1 flex min-h-9 w-full items-center justify-between rounded-lg px-3 text-[10px] font-bold tracking-[0.16em] text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+          >
+            {group.label}
+            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+          </button>
+        ) : null}
+        {(!isCollapsed || sidebarCollapsed && !mobile) && (
+          <div className="space-y-1">
+            {items.map(({ label, id, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => handleViewChange(id)}
+                title={sidebarCollapsed && !mobile ? label : undefined}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
+                  view === id ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "text-slate-600 hover:bg-slate-100"
+                } ${sidebarCollapsed && !mobile ? "justify-center px-2" : ""}`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {(!sidebarCollapsed || mobile) && <span className="flex-1">{label}</span>}
+                {id === "notifications" && notifications.filter((notification) => !notification.isRead).length > 0 && (!sidebarCollapsed || mobile) && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">{notifications.filter((notification) => !notification.isRead).length}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  });
   if (!authReady) {
     return <div className="flex min-h-screen items-center justify-center bg-[#f4f7f5] text-sm text-slate-500">Loading your secure workspace…</div>;
   }
@@ -1996,50 +2396,45 @@ export default function Home() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#f4f7f5] pb-24 text-slate-900 lg:pb-0">
       <div className="flex w-full">
-        <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white px-4 py-5 lg:flex lg:flex-col">
-          <div className="mb-6 flex flex-col items-center gap-1 px-2 py-1">
-            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className="h-32 w-32 object-contain" />
-            <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
+        <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-slate-200 bg-white px-3 py-4 transition-[width] duration-200 lg:flex ${sidebarCollapsed ? "w-20" : "w-72 px-4"}`}>
+          <div className={`mb-4 flex items-center ${sidebarCollapsed ? "flex-col gap-3" : "flex-col gap-1"}`}>
+            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className={`${sidebarCollapsed ? "h-12 w-12" : "h-32 w-32"} object-contain`} />
+            {!sidebarCollapsed && <div className="text-center text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>}
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:bg-slate-100"
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+            </button>
           </div>
 
-          {currentRole !== "client" && <button
+          {canManageModule("tasks") && <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="mb-7 flex items-center justify-between rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_28px_rgba(5,150,105,0.25)] transition hover:bg-emerald-800"
+            title={sidebarCollapsed ? "Create task" : undefined}
+            className={`mb-5 flex items-center rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_28px_rgba(5,150,105,0.25)] transition hover:bg-emerald-800 ${sidebarCollapsed ? "justify-center px-2" : "justify-between"}`}
           >
-            <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4" /> Create task</span>
-            <span className="rounded-lg border border-white/20 bg-white/10 px-1.5 py-0.5 text-[10px] font-bold">C</span>
+            <span className="inline-flex items-center gap-2"><Plus className="h-4 w-4" />{!sidebarCollapsed && "Create task"}</span>
+            {!sidebarCollapsed && <span className="rounded-lg border border-white/20 bg-white/10 px-1.5 py-0.5 text-[10px] font-bold">C</span>}
           </button>}
 
-          <nav className="space-y-3">
-            {navItems.filter(({ id }) => (id !== "executive" || currentRole === "admin" || currentRole === "manager") && ((id !== "stock" && id !== "documents") || currentRole !== "client")).map(({ label, id, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => handleViewChange(id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition ${
-                  view === id ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                <span className="flex-1">{label}</span>
-                {id === "notifications" && notifications.filter((notification) => !notification.isRead).length > 0 && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">{notifications.filter((notification) => !notification.isRead).length}</span>}
-              </button>
-            ))}
-          </nav>
+          <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto">{renderGroupedNavigation()}</nav>
 
-          <div className="mt-5 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">MA</div>
-            <div className="min-w-0 flex-1">
+          <div className={`mt-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 ${sidebarCollapsed ? "justify-center" : ""}`}>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">{userName.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase()}</div>
+            {!sidebarCollapsed && <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-slate-800">{userName}</div>
               <div className="text-[11px] text-slate-500">{user.email}</div>
-            </div>
+            </div>}
             <button
               type="button"
               onClick={() => void supabase.auth.signOut()}
               aria-label="Sign out"
               title="Sign out"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+              className={`${sidebarCollapsed ? "absolute bottom-4 right-4" : ""} flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700`}
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -2076,19 +2471,19 @@ export default function Home() {
                     placeholder="Search tasks, people..."
                   />
                 </label>
-                <button
+                {canViewModule("notes") && <button
                   type="button"
-                  onClick={() => setView("notes")}
+                  onClick={() => handleViewChange("notes")}
                   aria-label="Open sticky notes"
                   title="Sticky notes"
                   className={`flex h-10 w-10 items-center justify-center rounded-full border transition ${view === "notes" ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"}`}
                 >
                   <StickyNote className="h-4 w-4" />
-                </button>
-                <button type="button" onClick={() => setView("notifications")} aria-label="Open notifications" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700">
+                </button>}
+                {canViewModule("notifications") && <button type="button" onClick={() => handleViewChange("notifications")} aria-label="Open notifications" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700">
                   <Bell className="h-4 w-4" />
                   {notifications.some((notification) => !notification.isRead) && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />}
-                </button>
+                </button>}
               </div>
             </div>
           </header>
@@ -2140,7 +2535,7 @@ export default function Home() {
                         <h2 className="text-lg font-bold text-slate-900">My tasks</h2>
                         <p className="text-sm text-slate-500">Your highest priority work</p>
                       </div>
-                      <button type="button" onClick={() => setView("my-tasks")} className="text-sm font-semibold text-emerald-700">View all</button>
+                      <button type="button" onClick={() => handleViewChange("my-tasks")} className="text-sm font-semibold text-emerald-700">View all</button>
                     </div>
 
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -2218,14 +2613,19 @@ export default function Home() {
             )}
 
             {view === "stock" && organizationId && (
-              <StockManagement organizationId={organizationId} role={currentRole} />
+              <StockManagement organizationId={organizationId} role={currentRole} canManageOverride={canManageModule("stock")} />
             )}
-
             {view === "documents" && organizationId && (
-              <DocumentManagement organizationId={organizationId} role={currentRole} projects={projects} />
+              <DocumentManagement
+                organizationId={organizationId}
+                role={currentRole}
+                canManageOverride={canManageModule("documents")}
+                canDeleteAnyOverride={canManageModule("documents") && currentCustomRoleId !== null}
+                projects={projects}
+              />
             )}
 
-            {view === "executive" && (currentRole === "admin" || currentRole === "manager") && (
+            {view === "executive" && canViewModule("executive") && (
               <section>
                 <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div>
@@ -2297,7 +2697,7 @@ export default function Home() {
                       <button type="button" onClick={() => setTaskLayout("list")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "list" ? "bg-slate-950 text-white" : "text-slate-600"}`}>List</button>
                       <button type="button" onClick={() => setTaskLayout("kanban")} className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "kanban" ? "bg-slate-950 text-white" : "text-slate-600"}`}><KanbanSquare className="h-3.5 w-3.5" /> Kanban</button>
                     </div>
-                    {currentRole !== "client" && <button type="button" onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 self-start rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(16,185,129,0.16)]">
+                    {canManageModule("tasks") && <button type="button" onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 self-start rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(16,185,129,0.16)]">
                       <Plus className="h-4 w-4" /> New task
                     </button>}
                   </div>
@@ -2355,7 +2755,7 @@ export default function Home() {
                                 <KanbanCard
                                   key={task.id}
                                   task={task}
-                                  canEdit={currentRole !== "client"}
+                                  canEdit={canManageModule("tasks")}
                                   onOpen={openTask}
                                   onStatusChange={(item, nextStatus) => void handleTaskStatusChange(item, nextStatus)}
                                 />
@@ -2373,7 +2773,7 @@ export default function Home() {
                       onOpen={openTask}
                       onStatusChange={(task, status) => void handleTaskStatusChange(task, status)}
                       onToggleComplete={(task) => void handleTaskStatusChange(task, task.status === "Completed" ? "To do" : "Completed")}
-                      canEdit={currentRole !== "client"}
+                      canEdit={canManageModule("tasks")}
                     />
                   </>
                 ) : <div>
@@ -2382,7 +2782,7 @@ export default function Home() {
                     onOpen={openTask}
                     onStatusChange={(task, status) => void handleTaskStatusChange(task, status)}
                     onToggleComplete={(task) => void handleTaskStatusChange(task, task.status === "Completed" ? "To do" : "Completed")}
-                    canEdit={currentRole !== "client"}
+                    canEdit={canManageModule("tasks")}
                   />
                   <div className="hidden overflow-hidden rounded-3xl border border-slate-200 bg-white md:block">
                   <div className="hidden grid-cols-[2fr_1.1fr_1fr_0.9fr_0.8fr_24px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 md:grid">
@@ -2453,7 +2853,7 @@ export default function Home() {
                     <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">{pageTitle}</h1>
                     <p className="mt-2 text-sm text-slate-500">Manage the people and structure connected to this organization.</p>
                   </div>
-                  {currentRole !== "client" && <form onSubmit={handleManagementSubmit} className="flex w-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:w-auto md:flex-row md:items-center">
+                  {canManageModule(view) && <form onSubmit={handleManagementSubmit} className="flex w-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:w-auto md:flex-row md:items-center">
                     <input value={managementName} onChange={(event) => setManagementName(event.target.value)} required placeholder={view === "team" ? "Employee name" : view === "clients" ? "Client name" : view === "projects" ? "Project name" : "Department name"} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
                     {view === "team" && (
                       <>
@@ -2465,6 +2865,10 @@ export default function Home() {
                           <option value="manager">Manager</option>
                           <option value="admin">Admin</option>
                         </select>
+                        {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none">
+                          <option value="">Built-in permissions</option>
+                          {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                        </select>}
                         <select value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none">
                           <option value="">No department</option>
                           {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
@@ -2475,6 +2879,10 @@ export default function Home() {
                       <>
                         <input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" placeholder="Client login email" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
                         <input value={managementPassword} onChange={(event) => setManagementPassword(event.target.value)} required minLength={8} type="password" placeholder="Initial password (8+)" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
+                        {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none">
+                          <option value="">Client defaults</option>
+                          {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                        </select>}
                       </>
                     )}
                     {view === "projects" && (
@@ -2531,6 +2939,15 @@ export default function Home() {
                     {clients.length ? clients.map((client) => (
                       <div key={client.id} className="rounded-2xl border border-slate-200 bg-white p-5">
                         <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><BriefcaseBusiness className="h-5 w-5" /></div><div className="min-w-0"><h3 className="truncate font-bold text-slate-800">{client.name}</h3><p className="truncate text-xs text-slate-500">{client.contactEmail ?? "Client portal login"}</p></div></div>
+                        {client.userId && canAssignCustomRoles && (
+                          <label className="mt-4 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                            Portal role
+                            <select value={client.customRoleId ?? ""} onChange={(event) => { if (client.userId) void handleAssignCustomRole(client.userId, event.target.value); }} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-700">
+                              <option value="">Client defaults</option>
+                              {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                            </select>
+                          </label>
+                        )}
                       </div>
                     )) : <EmptyDirectory label="clients" />}
                   </div>
@@ -2599,34 +3016,66 @@ export default function Home() {
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">{notes.length} {notes.length === 1 ? "note" : "notes"}</div>
                 </div>
 
-                <form onSubmit={handleCreateNote} className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900"><StickyNote className="h-4 w-4 text-amber-500" /> Add a note</div>
-                  <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                    <input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Title (optional)" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-emerald-400" />
-                    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                {canManageModule("notes") && <form id="sticky-note-composer" onSubmit={handleCreateNote} className={`relative mb-5 min-h-60 overflow-hidden rounded-sm border p-5 pt-7 shadow-[0_14px_28px_rgba(15,23,42,0.12)] transition-transform sm:p-6 sm:pt-8 ${noteColor === "yellow" ? "rotate-[-0.6deg] border-amber-200 bg-amber-100" : noteColor === "blue" ? "rotate-[0.5deg] border-sky-200 bg-sky-100" : noteColor === "green" ? "rotate-[-0.4deg] border-emerald-200 bg-emerald-100" : "rotate-[0.6deg] border-pink-200 bg-pink-100"}`}>
+                  <span aria-hidden="true" className="absolute left-1/2 top-0 h-5 w-24 -translate-x-1/2 -translate-y-1/2 rotate-[-3deg] bg-white/70 shadow-sm" />
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm font-bold text-slate-900"><StickyNote className="h-4 w-4 text-amber-600" />{editingNoteId ? "Pick up and edit" : "Pin a new note"}</div>
+                    <div className="flex items-center gap-2 rounded-full bg-white/55 px-2.5 py-1.5">
                       {(["yellow", "blue", "green", "pink"] as WorkspaceNote["color"][]).map((color) => (
-                        <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label={`${color} note`} className={`h-5 w-5 rounded-full ${color === "yellow" ? "bg-amber-300" : color === "blue" ? "bg-sky-300" : color === "green" ? "bg-emerald-300" : "bg-pink-300"} ${noteColor === color ? "ring-2 ring-slate-700 ring-offset-2" : ""}`} />
+                        <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label={`${color} note`} aria-pressed={noteColor === color} className={`h-4 w-4 rounded-full ${color === "yellow" ? "bg-amber-400" : color === "blue" ? "bg-sky-400" : color === "green" ? "bg-emerald-400" : "bg-pink-400"} ${noteColor === color ? "ring-2 ring-slate-800 ring-offset-2 ring-offset-transparent" : ""}`} />
                       ))}
                     </div>
                   </div>
-                  <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} required rows={4} placeholder="Write anything you want to remember..." className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm leading-6 outline-none focus:border-emerald-400" />
-                  <div className="mt-3 flex justify-end">
-                    <button disabled={noteBusy} type="submit" className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Plus className="h-4 w-4" /> {noteBusy ? "Saving…" : "Add note"}</button>
+                  <input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Add a short title…" className="w-full border-0 border-b border-black/10 bg-transparent px-0 py-2 text-base font-bold text-slate-900 outline-none placeholder:text-slate-500/70 focus:border-slate-500" />
+                  <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} required rows={4} placeholder="Jot down a reminder, idea or hand-off…" className="mt-3 w-full resize-y border-0 bg-transparent px-0 py-2 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-500/70" />
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-slate-600">{editingNoteId ? "Changes stay here until you save." : "Your note will be pinned to this wall."}</span>
+                    <div className="flex shrink-0 gap-2">
+                      {editingNoteId && <button type="button" onClick={() => { setEditingNoteId(null); setNoteTitle(""); setNoteBody(""); setNoteColor("yellow"); setSyncMessage(""); }} className="rounded-lg bg-white/60 px-3 py-2 text-xs font-semibold text-slate-700">Cancel</button>}
+                      <button disabled={noteBusy} type="submit" className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-60">{!editingNoteId && <Plus className="h-3.5 w-3.5" />}{noteBusy ? "Saving…" : editingNoteId ? "Pin changes" : "Pin note"}</button>
+                    </div>
                   </div>
-                </form>
+                </form>}
 
-                {notes.length ? (
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                    {notes.map((note) => (
-                      <article key={note.id} className={`flex min-h-56 flex-col rounded-2xl border p-5 shadow-sm ${note.color === "yellow" ? "border-amber-200 bg-amber-50" : note.color === "blue" ? "border-sky-200 bg-sky-50" : note.color === "green" ? "border-emerald-200 bg-emerald-50" : "border-pink-200 bg-pink-50"}`}>
+                {notes.length > 0 && (
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+                    <label className="relative block min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} placeholder="Search notes" className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-amber-400" />
+                    </label>
+                    <div className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1">
+                      {(["all", "yellow", "blue", "green", "pink"] as const).map((color) => (
+                        <button key={color} type="button" onClick={() => setNoteColorFilter(color)} aria-pressed={noteColorFilter === color} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold capitalize ${noteColorFilter === color ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{color === "all" ? "All notes" : color}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {filteredNotes.length ? (
+                  <div className="grid gap-5 px-1 py-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {filteredNotes.map((note, index) => (
+                      <article key={note.id} onDoubleClick={() => note.authorId === user?.id && startEditingNote(note)} className={`group relative flex min-h-56 cursor-default flex-col rounded-sm border p-5 pt-7 shadow-[0_12px_22px_rgba(15,23,42,0.10)] transition duration-200 hover:z-10 hover:scale-[1.025] hover:rotate-0 hover:shadow-[0_20px_35px_rgba(15,23,42,0.18)] ${index % 3 === 1 ? "rotate-[0.8deg]" : index % 3 === 2 ? "rotate-[-0.7deg]" : "rotate-[-0.35deg]"} ${note.color === "yellow" ? "border-amber-200 bg-amber-100" : note.color === "blue" ? "border-sky-200 bg-sky-100" : note.color === "green" ? "border-emerald-200 bg-emerald-100" : "border-pink-200 bg-pink-100"}`}>
+                        <span aria-hidden="true" className="absolute left-1/2 top-0 h-5 w-20 -translate-x-1/2 -translate-y-1/2 rotate-[2deg] bg-white/65 shadow-sm" />
                         <div className="flex items-start justify-between gap-3">
                           <h2 className="min-w-0 flex-1 break-words text-lg font-bold text-slate-900">{note.title || "Untitled note"}</h2>
-                          <button type="button" onClick={() => void handleDeleteNote(note)} aria-label={`Delete ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/70 hover:text-rose-600"><X className="h-4 w-4" /></button>
+                          {canManageModule("notes") && note.authorId === user?.id && <div className="flex shrink-0 items-center gap-1">
+                            <button type="button" onClick={() => startEditingNote(note)} aria-label={`Edit ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/70 hover:text-slate-900"><Pencil className="h-4 w-4" /></button>
+                            <button type="button" onClick={() => void handleDeleteNote(note)} aria-label={`Delete ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/70 hover:text-rose-600"><X className="h-4 w-4" /></button>
+                          </div>}
                         </div>
-                        <p className="mt-3 flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{note.body}</p>
+                        <button type="button" onClick={() => startEditingNote(note)} disabled={note.authorId !== user?.id} aria-label={`Open ${note.title || "note"} to edit`} className="mt-3 flex-1 cursor-text whitespace-pre-wrap break-words text-left text-sm leading-6 text-slate-700 disabled:cursor-default">{note.body}</button>
                         <div className="mt-5 flex items-center justify-between gap-2 border-t border-black/5 pt-3">
-                          <span className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{formatUploadedDate(note.updatedAt)}</span>
-                          <button type="button" onClick={() => setSharingNote(note)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white"><Share2 className="h-3.5 w-3.5" /> Share</button>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{note.authorId === user?.id ? "You" : note.authorName}</span>
+                            <span className="text-slate-300">·</span>
+                            <span className="shrink-0 text-[10px] text-slate-500">{formatUploadedDate(note.updatedAt)}</span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {canManageModule("notes") && note.authorId === user?.id && (["yellow", "blue", "green", "pink"] as WorkspaceNote["color"][]).map((color) => (
+                              <button key={color} type="button" onClick={() => void handleNoteColorChange(note, color)} aria-label={`Change note color to ${color}`} aria-pressed={note.color === color} className={`h-3.5 w-3.5 rounded-full ${color === "yellow" ? "bg-amber-300" : color === "blue" ? "bg-sky-300" : color === "green" ? "bg-emerald-300" : "bg-pink-300"} ${note.color === color ? "ring-2 ring-slate-700 ring-offset-1" : ""}`} />
+                            ))}
+                            {canManageModule("notes") && note.authorId === user?.id && <button type="button" onClick={() => setSharingNote(note)} aria-label={`Share ${note.title || "note"}`} className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white"><Share2 className="h-3.5 w-3.5" /> Share</button>}
+                          </div>
                         </div>
                       </article>
                     ))}
@@ -2634,8 +3083,8 @@ export default function Home() {
                 ) : (
                   <div className="rounded-3xl border border-dashed border-amber-300 bg-amber-50/50 px-6 py-16 text-center">
                     <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700"><StickyNote className="h-7 w-7" /></div>
-                    <h2 className="mt-4 text-lg font-bold text-slate-900">Your notes will appear here</h2>
-                    <p className="mt-1 text-sm text-slate-500">Start with a quick reminder, idea or hand-off above.</p>
+                    <h2 className="mt-4 text-lg font-bold text-slate-900">{notes.length ? "No matching notes" : "Your notes will appear here"}</h2>
+                    <p className="mt-1 text-sm text-slate-500">{notes.length ? "Try a different search term or color." : "Start with a quick reminder, idea or hand-off above."}</p>
                   </div>
                 )}
               </section>
@@ -2667,7 +3116,7 @@ export default function Home() {
                     <button disabled={settingsBusy} type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{settingsBusy ? "Saving…" : "Save settings"}</button>
                   </div>
                 </form>
-                {(currentRole === "admin" || currentRole === "manager") && (
+                {canManageModule("settings") && (
                   <form onSubmit={handleOrganizationSave} className="mt-5 rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
                     <div className="mb-5"><h2 className="text-lg font-bold text-slate-900">Organization profile</h2><p className="mt-1 text-sm text-slate-500">Keep the workspace identity and operating timezone current.</p></div>
                     <div className="space-y-4">
@@ -2678,6 +3127,70 @@ export default function Home() {
                     <div className="mt-5 flex justify-end"><button disabled={settingsBusy} type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{settingsBusy ? "Saving…" : "Save organization"}</button></div>
                   </form>
                 )}
+                {(currentRole === "admin" || currentRole === "manager") && (
+                  <section className="mt-5 rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
+                    <div className="mb-5">
+                      <h2 className="text-lg font-bold text-slate-900">Workspace roles</h2>
+                      <p className="mt-1 text-sm text-slate-500">Create employee or client roles with module-level view and manage access. Admin accounts always keep full access.</p>
+                    </div>
+                    {workspaceRoles.length > 0 && (
+                      <div className="mb-6 space-y-2">
+                        {workspaceRoles.map((role) => (
+                          <div key={role.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 p-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-semibold text-slate-800">{role.name}</div>
+                              <div className="truncate text-xs text-slate-500">{role.description || "No description"} · {members.filter((member) => member.customRoleId === role.id).length} employee assignments</div>
+                            </div>
+                            <button type="button" onClick={() => handleEditWorkspaceRole(role)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Edit</button>
+                            <button type="button" onClick={() => void handleDeleteWorkspaceRole(role)} className="rounded-lg border border-rose-100 px-3 py-2 text-xs font-semibold text-rose-700">Delete</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <form onSubmit={handleSaveWorkspaceRole} className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-semibold text-slate-600">
+                          Role name
+                          <input value={roleName} onChange={(event) => setRoleName(event.target.value)} required maxLength={60} placeholder="e.g. Site supervisor" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-emerald-400" />
+                        </label>
+                        <label className="text-xs font-semibold text-slate-600">
+                          Description
+                          <input value={roleDescription} onChange={(event) => setRoleDescription(event.target.value)} maxLength={160} placeholder="What this role can do" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-emerald-400" />
+                        </label>
+                      </div>
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        <div className="grid grid-cols-[1fr_5rem_5rem] bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          <span>Module</span><span className="text-center">View</span><span className="text-center">Manage</span>
+                        </div>
+                        {roleModules.map(({ id, label }) => {
+                          const access = rolePermissions[id] ?? { view: false, manage: false };
+                          return (
+                            <div key={id} className="grid grid-cols-[1fr_5rem_5rem] items-center border-t border-slate-100 px-3 py-2.5 text-sm">
+                              <span className="font-medium text-slate-700">{label}</span>
+                              <label className="flex justify-center" aria-label={`View ${label}`}>
+                                <input type="checkbox" checked={access.view || access.manage} onChange={(event) => setRolePermissions((current) => ({
+                                  ...current,
+                                  [id]: { ...access, view: event.target.checked || access.manage },
+                                }))} className="h-4 w-4 accent-emerald-700" />
+                              </label>
+                              <label className="flex justify-center" aria-label={`Manage ${label}`}>
+                                <input type="checkbox" checked={access.manage} onChange={(event) => setRolePermissions((current) => ({
+                                  ...current,
+                                  [id]: { view: event.target.checked || access.view, manage: event.target.checked },
+                                }))} className="h-4 w-4 accent-emerald-700" />
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {syncMessage && <div role="status" className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">{syncMessage}</div>}
+                      <div className="flex justify-end gap-2">
+                        {editingWorkspaceRoleId && <button type="button" onClick={resetRoleEditor} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600">Cancel</button>}
+                        <button disabled={roleBusy} type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{roleBusy ? "Saving…" : editingWorkspaceRoleId ? "Save role" : "Create role"}</button>
+                      </div>
+                    </form>
+                  </section>
+                )}
               </section>
             )}
 
@@ -2686,7 +3199,7 @@ export default function Home() {
                 <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><ShieldCheck className="h-8 w-8" /></div>
                 <h2 className="mt-5 text-2xl font-black tracking-[-0.06em] text-slate-900">{pageTitle} is ready for your next phase</h2>
                 <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500">This workspace is designed for a future-ready industrial operations layer.</p>
-                <button type="button" onClick={() => setView("dashboard")} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Back to dashboard <ArrowRight className="h-4 w-4" /></button>
+                <button type="button" onClick={() => handleViewChange("dashboard")} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Back to dashboard <ArrowRight className="h-4 w-4" /></button>
               </div>
             )}
           </div>
@@ -2694,7 +3207,7 @@ export default function Home() {
       </div>
 
       <div className="fixed bottom-0 left-0 z-40 flex w-full items-center justify-around gap-1 border-t border-slate-800 bg-slate-950/95 px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.18)] backdrop-blur-xl lg:hidden">
-        {navItems.filter(({ id }) => id !== "all-tasks").slice(0, 5).map(({ label, id, icon: Icon }) => (
+        {visibleNavItems.filter(({ id }) => id !== "all-tasks").slice(0, 5).map(({ label, id, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -2722,20 +3235,12 @@ export default function Home() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            {currentRole !== "client" && (
+            {canManageModule("tasks") && (
               <button type="button" onClick={() => { setShowCreate(true); setMobileNavOpen(false); }} className="mb-6 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_28px_rgba(5,150,105,0.25)]">
                 <Plus className="h-4 w-4" /> Create task
               </button>
             )}
-            <nav className="space-y-1.5">
-              {navItems.filter(({ id }) => (id !== "executive" || currentRole === "admin" || currentRole === "manager") && ((id !== "stock" && id !== "documents") || currentRole !== "client")).map(({ label, id, icon: Icon }) => (
-                <button key={id} type="button" onClick={() => handleViewChange(id)} className={`flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-medium transition ${view === id ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "text-slate-600 hover:bg-slate-100"}`}>
-                  <Icon className="h-5 w-5" />
-                  <span className="flex-1">{label}</span>
-                  {id === "notifications" && notifications.filter((notification) => !notification.isRead).length > 0 && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">{notifications.filter((notification) => !notification.isRead).length}</span>}
-                </button>
-              ))}
-            </nav>
+            <nav className="flex-1 space-y-1 overflow-y-auto">{renderGroupedNavigation(true)}</nav>
             <div className="mt-auto flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">MA</div>
               <div className="min-w-0 flex-1">
@@ -2790,11 +3295,11 @@ export default function Home() {
       )}
 
       <div className="fixed bottom-6 left-1/2 z-30 hidden -translate-x-1/2 items-center gap-2 rounded-full border border-slate-200 bg-white/90 p-2 shadow-[0_20px_50px_rgba(15,23,42,0.14)] backdrop-blur-xl lg:flex">
-        {navItems.filter(({ id }) => id !== "all-tasks").slice(0, 5).map(({ label, id, icon: Icon }) => (
+        {visibleNavItems.filter(({ id }) => id !== "all-tasks").slice(0, 5).map(({ label, id, icon: Icon }) => (
           <button
             key={id}
             type="button"
-            onClick={() => setView(id)}
+            onClick={() => handleViewChange(id)}
             className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition ${
               view === id ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
             }`}
@@ -2907,13 +3412,13 @@ export default function Home() {
             </div>
 
             <form onSubmit={handleTaskTitleSave} className="flex items-start gap-2">
-              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-0 text-3xl font-black tracking-[-0.06em] text-slate-900 outline-none focus:border-slate-200 focus:bg-slate-50 focus:px-2" aria-label="Task title" />
-              {titleDraft.trim() !== selectedTask.title && <button disabled={titleBusy} type="submit" className="mt-1 shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{titleBusy ? "Saving…" : "Save"}</button>}
+              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} readOnly={!canManageModule("tasks")} className="min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-0 text-3xl font-black tracking-[-0.06em] text-slate-900 outline-none focus:border-slate-200 focus:bg-slate-50 focus:px-2" aria-label="Task title" />
+              {canManageModule("tasks") && titleDraft.trim() !== selectedTask.title && <button disabled={titleBusy} type="submit" className="mt-1 shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{titleBusy ? "Saving…" : "Save"}</button>}
             </form>
             <div className="mt-4 flex flex-wrap gap-2">
               <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${getPriorityClasses(selectedTask.priority)}`}>{selectedTask.priority}</span>
               <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${getStatusClasses(selectedTask.status)}`}>{selectedTask.status}</span>
-              {currentRole !== "client" && (
+              {canManageModule("tasks") && (
                 <select
                   value={selectedTask.status}
                   onChange={(event) => void handleTaskStatusChange(selectedTask, event.target.value as TaskStatus)}
@@ -2927,10 +3432,10 @@ export default function Home() {
 
             <form onSubmit={handleTaskDescriptionSave} className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">Description</div>
-              <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} rows={3} placeholder="Add task details, scope or handoff notes..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400" />
-              <div className="mt-2 flex justify-end">
+              <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} readOnly={!canManageModule("tasks")} rows={3} placeholder="Add task details, scope or handoff notes..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400" />
+              {canManageModule("tasks") && <div className="mt-2 flex justify-end">
                 <button disabled={descriptionBusy} type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{descriptionBusy ? "Saving…" : "Save description"}</button>
-              </div>
+              </div>}
             </form>
 
             <div className="mt-5 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
@@ -2966,7 +3471,7 @@ export default function Home() {
                 <span className="text-sm text-slate-500">{getSubtaskStats(selectedTask.subtasks).done}/{getSubtaskStats(selectedTask.subtasks).total}</span>
               </div>
 
-              <form onSubmit={handleCreateSubtask} className="mb-3 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              {canManageModule("tasks") && <form onSubmit={handleCreateSubtask} className="mb-3 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-xs font-semibold text-slate-600">{subtaskParentId ? "Add nested subtask" : "Add subtask"}</div>
                   {subtaskParentId && <button type="button" onClick={() => { setSubtaskParentId(null); setSubtaskDescription(""); }} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Cancel nesting</button>}
@@ -2976,7 +3481,7 @@ export default function Home() {
                   <button disabled={subtaskBusy} type="submit" className="rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{subtaskBusy ? "…" : "Add"}</button>
                 </div>
                 <textarea value={subtaskDescription} onChange={(event) => setSubtaskDescription(event.target.value)} rows={2} placeholder="Optional description..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none placeholder:text-slate-400" />
-              </form>
+              </form>}
 
               <div className="space-y-2">
                 {selectedTask.subtasks.length > 0 ? (
@@ -2985,7 +3490,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => void handleSubtaskStatusChange(subtask)}
-                        disabled={currentRole === "client"}
+                        disabled={!canManageModule("tasks")}
                         aria-label={`${subtask.completed ? "Reopen" : "Complete"} ${subtask.title}`}
                         className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold transition ${subtask.completed ? "bg-emerald-100 text-emerald-700" : "border border-slate-200 bg-slate-100 text-slate-500"} disabled:cursor-not-allowed disabled:opacity-70`}
                       >
@@ -2996,13 +3501,14 @@ export default function Home() {
                         <textarea
                           defaultValue={subtask.description}
                           onBlur={(event) => void handleSubtaskDescriptionSave(subtask, event.target.value)}
+                          readOnly={!canManageModule("tasks")}
                           rows={1}
                           placeholder="Add description..."
                           className="mt-1 w-full resize-y border-0 bg-transparent p-0 text-xs leading-5 text-slate-500 outline-none placeholder:text-slate-400"
                           aria-label={`Description for ${subtask.title}`}
                         />
                       </div>
-                      {currentRole !== "client" && (
+                      {canManageModule("tasks") && (
                         <button type="button" onClick={() => setSubtaskParentId(subtask.supabaseId)} className="shrink-0 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:border-emerald-300 hover:text-emerald-700">
                           Add child
                         </button>
@@ -3018,12 +3524,12 @@ export default function Home() {
             <div className="mt-6">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Attachments</h3>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700">
+                {canManageModule("tasks") && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700">
                   <Paperclip className="h-3.5 w-3.5" /> {attachmentBusy ? "Uploading…" : "Add file"}
                   <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" capture="environment" onChange={handleUploadAttachment} disabled={attachmentBusy} className="hidden" />
-                </label>
+                </label>}
               </div>
-              {attachmentRetry && (
+              {canManageModule("tasks") && attachmentRetry && (
                 <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
                   <span className="truncate">Upload failed: {attachmentRetry.name}</span>
                   <button type="button" disabled={attachmentBusy} onClick={() => void uploadAttachment(attachmentRetry)} className="shrink-0 rounded-lg bg-amber-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-60">Retry</button>
@@ -3057,10 +3563,10 @@ export default function Home() {
                   </div>
                 )) : <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No comments yet.</div>}
               </div>
-              <form onSubmit={handleAddComment} className="mt-4 flex gap-2">
+              {canManageModule("tasks") && <form onSubmit={handleAddComment} className="mt-4 flex gap-2">
                 <input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} required className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none placeholder:text-slate-400" placeholder="Write a comment..." />
                 <button type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white">Send</button>
-              </form>
+              </form>}
             </div>
           </motion.aside>
         </div>
@@ -3081,6 +3587,9 @@ export default function Home() {
                 <select value={managementRole} onChange={(event) => setManagementRole(event.target.value as WorkspaceMember["role"])} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
                   <option value="employee">Employee</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option><option value="admin">Admin</option>
                 </select>
+                {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
+                  <option value="">Built-in permissions</option>{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                </select>}
                 <select value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
                   <option value="">No department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
                 </select>
