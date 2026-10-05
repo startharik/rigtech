@@ -40,6 +40,7 @@ import {
   ShieldCheck,
   Sparkles,
   StickyNote,
+  Trash2,
   Users,
   Wrench,
   X,
@@ -1402,6 +1403,64 @@ export default function Home() {
     setSyncMessage(status === "Completed" ? "Task marked complete." : `Task moved to ${status}.`);
   };
 
+  const handleDeleteTask = async (task: Task) => {
+    if (!canManageModule("tasks") || !organizationId) return;
+    if (!window.confirm(`Delete "${task.title}" and all of its subtasks? This cannot be undone.`)) return;
+
+    const { data: taskRows, error: taskLookupError } = await supabase
+      .from("tasks")
+      .select("id, parent_task_id")
+      .eq("organization_id", organizationId);
+    if (taskLookupError) {
+      setSyncMessage(`Unable to prepare task deletion: ${taskLookupError.message}`);
+      return;
+    }
+
+    const taskIds = new Set([task.supabaseId]);
+    let addedTask = true;
+    while (addedTask) {
+      addedTask = false;
+      for (const row of taskRows ?? []) {
+        if (row.parent_task_id && taskIds.has(row.parent_task_id) && !taskIds.has(row.id)) {
+          taskIds.add(row.id);
+          addedTask = true;
+        }
+      }
+    }
+
+    const { data: attachmentRows, error: attachmentLookupError } = await supabase
+      .from("attachments")
+      .select("storage_path")
+      .in("task_id", [...taskIds]);
+    if (attachmentLookupError) {
+      setSyncMessage(`Unable to prepare task deletion: ${attachmentLookupError.message}`);
+      return;
+    }
+    const attachmentPaths = (attachmentRows ?? []).map((attachment) => attachment.storage_path);
+    if (attachmentPaths.length) {
+      const { error: attachmentDeleteError } = await supabase.storage
+        .from("task-attachments")
+        .remove(attachmentPaths);
+      if (attachmentDeleteError) {
+        setSyncMessage(`Unable to delete task attachments: ${attachmentDeleteError.message}`);
+        return;
+      }
+    }
+
+    const { error } = await supabase
+      .from("tasks")
+      .delete()
+      .eq("id", task.supabaseId)
+      .eq("organization_id", organizationId);
+    if (error) {
+      setSyncMessage(`Unable to delete task: ${error.message}`);
+      return;
+    }
+    setTasks((current) => current.filter((item) => item.supabaseId !== task.supabaseId));
+    setSelectedTask((current) => current?.supabaseId === task.supabaseId ? null : current);
+    setSyncMessage(`Task "${task.title}" and its subtasks were deleted.`);
+  };
+
   useEffect(() => {
     if (!user) return;
     const syncOfflineUpdates = async () => {
@@ -2015,6 +2074,35 @@ export default function Home() {
       resetManagementForm();
     }
     setManagementBusy(false);
+  };
+
+  const handleDeleteDepartment = async (department: WorkspaceDepartment) => {
+    if (!organizationId || !canManageModule("departments")) return;
+    if (!window.confirm(`Delete the "${department.name}" department? Employees and teams assigned to it will become unassigned.`)) return;
+
+    setManagementBusy(true);
+    const { error } = await supabase
+      .from("departments")
+      .delete()
+      .eq("id", department.id)
+      .eq("organization_id", organizationId);
+    if (error) {
+      setSyncMessage(`Unable to delete department: ${error.message}`);
+      setManagementBusy(false);
+      return;
+    }
+    setDepartments((current) => current.filter((item) => item.id !== department.id));
+    setMembers((current) => current.map((member) => {
+      const departmentIds = member.departmentIds.filter((id) => id !== department.id);
+      return {
+        ...member,
+        departmentIds,
+        departmentId: member.departmentId === department.id ? departmentIds[0] ?? null : member.departmentId,
+      };
+    }));
+    setTeams((current) => current.map((team) => team.departmentId === department.id ? { ...team, departmentId: null } : team));
+    setManagementBusy(false);
+    setSyncMessage(`Department "${department.name}" deleted.`);
   };
 
   const markNotificationRead = async (notification: WorkspaceNotification) => {
@@ -2926,7 +3014,11 @@ export default function Home() {
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {departments.length ? departments.map((department) => (
                       <div key={department.id} className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div><div><h3 className="font-bold text-slate-800">{department.name}</h3><p className="text-xs text-slate-500">{members.filter((member) => member.departmentIds.includes(department.id)).length} employees</p></div></div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div>
+                          <div className="min-w-0 flex-1"><h3 className="truncate font-bold text-slate-800">{department.name}</h3><p className="text-xs text-slate-500">{members.filter((member) => member.departmentIds.includes(department.id)).length} employees</p></div>
+                          {canManageModule("departments") && <button type="button" disabled={managementBusy} onClick={() => void handleDeleteDepartment(department)} aria-label={`Delete ${department.name} department`} title="Delete department" className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>}
+                        </div>
                       </div>
                     )) : <EmptyDirectory label="departments" />}
                   </div>
@@ -3421,9 +3513,14 @@ export default function Home() {
           >
             <div className="mb-5 flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Task details</div>
-              <button type="button" onClick={() => setSelectedTask(null)} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {canManageModule("tasks") && <button type="button" onClick={() => void handleDeleteTask(selectedTask)} aria-label={`Delete task ${selectedTask.title}`} title="Delete task and subtasks" className="flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 text-rose-600 transition hover:bg-rose-50">
+                  <Trash2 className="h-4 w-4" />
+                </button>}
+                <button type="button" onClick={() => setSelectedTask(null)} aria-label="Close task details" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="mb-4 flex items-center gap-3">
