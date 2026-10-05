@@ -20,6 +20,11 @@ export const metadata: Metadata = {
     icon: "/favicon.ico",
     apple: "/apple-icon.png",
   },
+  appleWebApp: {
+    capable: true,
+    title: "Rigtech",
+    statusBarStyle: "default",
+  },
 };
 
 export const viewport = {

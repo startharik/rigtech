@@ -2387,9 +2387,9 @@ export default function Home() {
   const userName = String(user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Workspace member");
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#f4f7f5] pb-24 text-slate-900 lg:pb-0">
+    <div className="min-h-screen overflow-x-clip bg-[#f4f7f5] pb-24 text-slate-900 lg:pb-0">
       <div className="flex w-full">
-        <aside className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-slate-200 bg-white px-3 py-4 transition-[width] duration-200 lg:flex ${sidebarCollapsed ? "w-20" : "w-72 px-4"}`}>
+        <aside className={`sticky top-0 hidden h-dvh shrink-0 self-start flex-col border-r border-slate-200 bg-white px-3 py-4 transition-[width] duration-200 lg:flex ${sidebarCollapsed ? "w-20" : "w-72 px-4"}`}>
           <div className={`mb-4 flex items-center ${sidebarCollapsed ? "flex-col gap-3" : "flex-col gap-1"}`}>
             <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className={`${sidebarCollapsed ? "h-12 w-12" : "h-32 w-32"} object-contain`} />
             {!sidebarCollapsed && <div className="text-center text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>}
