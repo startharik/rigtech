@@ -85,6 +85,7 @@ type WorkspaceMember = {
   role: "admin" | "manager" | "supervisor" | "employee" | "client";
   customRoleId: string | null;
   departmentId: string | null;
+  departmentIds: string[];
   teamId: string | null;
   availabilityStatus: "available" | "limited" | "unavailable" | "leave";
   capacityHoursPerWeek: number;
@@ -303,6 +304,7 @@ const roleCanView = (
   assignedRole: WorkspaceRole | undefined,
   targetView: WorkspaceView,
 ) => {
+  if (targetView === "documents") return role !== null;
   if (role === "admin") return true;
   const access = assignedRole?.permissions[viewModule(targetView)] ?? defaultModuleAccess(role, viewModule(targetView));
   return access.view || access.manage;
@@ -628,6 +630,7 @@ export default function Home() {
   const [managementRole, setManagementRole] = useState<WorkspaceMember["role"]>("employee");
   const [managementCustomRoleId, setManagementCustomRoleId] = useState("");
   const [managementDepartmentId, setManagementDepartmentId] = useState("");
+  const [managementDepartmentIds, setManagementDepartmentIds] = useState<string[]>([]);
   const [managementTeamId, setManagementTeamId] = useState("");
   const [managementAvailability, setManagementAvailability] = useState<WorkspaceMember["availabilityStatus"]>("available");
   const [managementCapacity, setManagementCapacity] = useState("40");
@@ -692,7 +695,8 @@ export default function Home() {
   const canViewModule = (module: string) => moduleAccess(module).view || moduleAccess(module).manage;
   const canManageModule = (module: string) => moduleAccess(module).manage;
   const canAssignCustomRoles = currentRole === "admin" || currentRole === "manager";
-  const canView = (targetView: WorkspaceView) => canViewModule(viewModule(targetView));
+  const canView = (targetView: WorkspaceView) =>
+    canViewModule(viewModule(targetView)) || (targetView === "documents" && currentRole !== null);
   const visibleNavItems = navItems.filter(({ id }) => canView(id));
 
   useEffect(() => {
@@ -913,7 +917,7 @@ export default function Home() {
           : null;
         const organizationRow = (legacyOrganizationResult?.data ?? organizationResult.data) as { name: string; website?: string | null; timezone?: string | null } | null;
         const organizationError = legacyOrganizationResult?.error ?? organizationResult.error;
-        const [{ data, error }, { data: clientRows, error: clientsError }, { data: departmentRows, error: departmentsError }, { data: teamRows, error: teamsError }, { data: projectRows, error: projectsError }, { data: clientUserRows, error: clientUsersError }, { data: clientRoleRows, error: clientRolesError }] = await Promise.all([
+        const [{ data, error }, { data: clientRows, error: clientsError }, { data: departmentRows, error: departmentsError }, { data: teamRows, error: teamsError }, { data: projectRows, error: projectsError }, { data: clientUserRows, error: clientUsersError }, { data: clientRoleRows, error: clientRolesError }, { data: memberDepartmentRows, error: memberDepartmentsError }] = await Promise.all([
           supabase.from("task_tree").select("*").eq("organization_id", membership.organization_id).order("created_at", { ascending: false }).limit(50),
           supabase.from("clients").select("id, name, contact_email").eq("organization_id", membership.organization_id).order("name"),
           supabase.from("departments").select("id, name").eq("organization_id", membership.organization_id).order("name"),
@@ -921,18 +925,24 @@ export default function Home() {
           supabase.from("projects").select("id, name, description, client_id, status, start_date, target_date, created_at").eq("organization_id", membership.organization_id).order("name"),
           supabase.from("client_users").select("client_id, user_id"),
           supabase.from("organization_members").select("user_id, custom_role_id").eq("organization_id", membership.organization_id).eq("role", "client"),
+          supabase.from("organization_member_departments").select("user_id, department_id").eq("organization_id", membership.organization_id),
         ]);
         if (error) throw new Error(`Task lookup failed: ${error.message}`);
         if (membersError) throw new Error(`Member lookup failed: ${membersError.message}`);
         if (clientsError) throw new Error(`Client lookup failed: ${clientsError.message}`);
         if (clientUsersError) throw new Error(`Client login lookup failed: ${clientUsersError.message}`);
         if (clientRolesError) throw new Error(`Client role lookup failed: ${clientRolesError.message}`);
+        if (memberDepartmentsError) throw new Error(`Employee department lookup failed: ${memberDepartmentsError.message}`);
         if (departmentsError) throw new Error(`Department lookup failed: ${departmentsError.message}`);
         if (teamsError) throw new Error(`Team lookup failed: ${teamsError.message}`);
         if (organizationError) throw new Error(`Organization lookup failed: ${organizationError.message}`);
         if (projectsError) throw new Error(`Project lookup failed: ${projectsError.message}`);
 
         const memberIds = (memberRows ?? []).map((row) => row.user_id);
+        const departmentIdsByMember = new Map<string, string[]>();
+        (memberDepartmentRows ?? []).forEach((row) => {
+          departmentIdsByMember.set(row.user_id, [...(departmentIdsByMember.get(row.user_id) ?? []), row.department_id]);
+        });
         const profileById = new Map<string, { full_name?: string | null; name?: string | null; email?: string | null }>();
         if (memberIds.length) {
           const { data: profiles, error: profilesError } = await supabase
@@ -950,6 +960,7 @@ export default function Home() {
               role: row.role,
               customRoleId: row.custom_role_id ?? null,
               departmentId: row.department_id,
+              departmentIds: departmentIdsByMember.get(row.user_id) ?? (row.department_id ? [row.department_id] : []),
               teamId: row.team_id ?? null,
               availabilityStatus: row.availability_status ?? "available",
               capacityHoursPerWeek: Number(row.capacity_hours_per_week ?? 40),
@@ -1799,10 +1810,17 @@ export default function Home() {
     setManagementRole("employee");
     setManagementCustomRoleId("");
     setManagementDepartmentId("");
+    setManagementDepartmentIds([]);
     setManagementTeamId("");
     setManagementAvailability("available");
     setManagementCapacity("40");
     setManagementMaxTasks("10");
+  };
+
+  const toggleManagementDepartment = (departmentId: string) => {
+    setManagementDepartmentIds((current) => current.includes(departmentId)
+      ? current.filter((id) => id !== departmentId)
+      : [...current, departmentId]);
   };
 
   const handleEditMember = (member: WorkspaceMember) => {
@@ -1812,6 +1830,7 @@ export default function Home() {
     setManagementRole(member.role);
     setManagementCustomRoleId(member.customRoleId ?? "");
     setManagementDepartmentId(member.departmentId ?? "");
+    setManagementDepartmentIds(member.departmentIds);
     setManagementTeamId(member.teamId ?? "");
     setManagementAvailability(member.availabilityStatus);
     setManagementCapacity(String(member.capacityHoursPerWeek));
@@ -1834,7 +1853,8 @@ export default function Home() {
         member_password: managementPassword.trim() || undefined,
         role: managementRole,
         ...(canAssignCustomRoles ? { custom_role_id: managementCustomRoleId || null } : {}),
-        department_id: managementDepartmentId || null,
+        department_ids: managementDepartmentIds,
+        department_id: managementDepartmentIds[0] ?? null,
         team_id: managementTeamId || null,
         availability_status: managementAvailability,
         capacity_hours_per_week: Number(managementCapacity),
@@ -1853,7 +1873,7 @@ export default function Home() {
     if (error) {
       setSyncMessage(`Unable to update employee: ${error}`);
     } else if (result.data?.member) {
-      const updatedMember = result.data.member as WorkspaceMember & { custom_role_id?: string | null; department_id: string | null; team_id?: string | null; availability_status?: WorkspaceMember["availabilityStatus"]; capacity_hours_per_week?: number; max_active_tasks?: number };
+      const updatedMember = result.data.member as WorkspaceMember & { custom_role_id?: string | null; department_id: string | null; department_ids?: string[]; team_id?: string | null; availability_status?: WorkspaceMember["availabilityStatus"]; capacity_hours_per_week?: number; max_active_tasks?: number };
       setMembers((current) => current.map((member) => member.id === updatedMember.id ? {
         ...member,
         name: updatedMember.name,
@@ -1861,6 +1881,7 @@ export default function Home() {
         role: updatedMember.role,
         customRoleId: updatedMember.custom_role_id ?? null,
         departmentId: updatedMember.department_id,
+        departmentIds: updatedMember.department_ids ?? managementDepartmentIds,
         teamId: updatedMember.team_id ?? member.teamId,
         availabilityStatus: updatedMember.availability_status ?? member.availabilityStatus,
         capacityHoursPerWeek: Number(updatedMember.capacity_hours_per_week ?? member.capacityHoursPerWeek),
@@ -1868,7 +1889,7 @@ export default function Home() {
       } : member).sort((a, b) => a.name.localeCompare(b.name)));
       setEditingMember(null);
       resetManagementForm();
-      setSyncMessage("Employee updated in Supabase.");
+      setSyncMessage("Employee updated in Rigtech Operations.");
     }
     setManagementBusy(false);
   };
@@ -1909,7 +1930,8 @@ export default function Home() {
 
       const result = await supabase.functions.invoke("create-team-member", {
         body: {
-          department_id: managementDepartmentId || null,
+          department_ids: managementDepartmentIds,
+          department_id: managementDepartmentIds[0] ?? null,
           member_name: managementMemberName.trim() || name,
           member_email: managementEmail.trim(),
           member_password: managementPassword,
@@ -1938,6 +1960,7 @@ export default function Home() {
           role: result.data.member.role,
           customRoleId: result.data.member.custom_role_id ?? null,
           departmentId: result.data.member.department_id,
+          departmentIds: result.data.member.department_ids ?? managementDepartmentIds,
           teamId: result.data.member.team_id ?? null,
           availabilityStatus: result.data.member.availability_status ?? "available",
           capacityHoursPerWeek: Number(result.data.member.capacity_hours_per_week ?? 40),
@@ -2862,10 +2885,17 @@ export default function Home() {
                           <option value="">Built-in permissions</option>
                           {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                         </select>}
-                        <select value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none">
-                          <option value="">No department</option>
-                          {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
-                        </select>
+                        <fieldset className="min-w-48 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <legend className="px-1 text-xs font-semibold text-slate-600">Departments</legend>
+                          <div className="max-h-28 space-y-1 overflow-y-auto">
+                            {departments.length ? departments.map((department) => (
+                              <label key={department.id} className="flex cursor-pointer items-center gap-2 py-1 text-xs text-slate-700">
+                                <input type="checkbox" checked={managementDepartmentIds.includes(department.id)} onChange={() => toggleManagementDepartment(department.id)} className="h-4 w-4 accent-emerald-700" />
+                                {department.name}
+                              </label>
+                            )) : <span className="text-xs text-slate-500">No departments created.</span>}
+                          </div>
+                        </fieldset>
                       </>
                     )}
                     {view === "clients" && (
@@ -2896,7 +2926,7 @@ export default function Home() {
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {departments.length ? departments.map((department) => (
                       <div key={department.id} className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div><div><h3 className="font-bold text-slate-800">{department.name}</h3><p className="text-xs text-slate-500">{members.filter((member) => member.departmentId === department.id).length} employees</p></div></div>
+                        <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div><div><h3 className="font-bold text-slate-800">{department.name}</h3><p className="text-xs text-slate-500">{members.filter((member) => member.departmentIds.includes(department.id)).length} employees</p></div></div>
                       </div>
                     )) : <EmptyDirectory label="departments" />}
                   </div>
@@ -2916,7 +2946,7 @@ export default function Home() {
                                 <td className="px-5 py-4 font-semibold text-slate-900">{member.name}</td>
                                 <td className="px-5 py-4">{member.email}</td>
                                 <td className="px-5 py-4"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">{memberRoleLabels[member.role]}</span></td>
-                                <td className="px-5 py-4">{departments.find((department) => department.id === member.departmentId)?.name ?? "No department"}</td>
+                                <td className="px-5 py-4">{member.departmentIds.length ? member.departmentIds.map((departmentId) => departments.find((department) => department.id === departmentId)?.name).filter((name): name is string => Boolean(name)).join(", ") : "No department"}</td>
                                 <td className="px-5 py-4 text-right"><button type="button" onClick={() => handleEditMember(member)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button></td>
                               </tr>
                             ))}
@@ -3583,9 +3613,17 @@ export default function Home() {
                 {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
                   <option value="">Built-in permissions</option>{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                 </select>}
-                <select value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
-                  <option value="">No department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
-                </select>
+                <fieldset className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <legend className="px-1 text-xs font-semibold text-slate-600">Departments</legend>
+                  <div className="max-h-36 space-y-1 overflow-y-auto">
+                    {departments.length ? departments.map((department) => (
+                      <label key={department.id} className="flex cursor-pointer items-center gap-2 py-1 text-sm text-slate-700">
+                        <input type="checkbox" checked={managementDepartmentIds.includes(department.id)} onChange={() => toggleManagementDepartment(department.id)} className="h-4 w-4 accent-emerald-700" />
+                        {department.name}
+                      </label>
+                    )) : <span className="text-sm text-slate-500">No departments created.</span>}
+                  </div>
+                </fieldset>
                 <select value={managementTeamId} onChange={(event) => setManagementTeamId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
                   <option value="">No team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
                 </select>

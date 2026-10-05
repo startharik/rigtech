@@ -45,6 +45,21 @@ export type Database = {
         };
         Update: Partial<Database["public"]["Tables"]["organization_members"]["Insert"]>;
       };
+      organization_member_departments: {
+        Row: {
+          organization_id: string;
+          user_id: string;
+          department_id: string;
+          created_at: string;
+        };
+        Insert: {
+          organization_id: string;
+          user_id: string;
+          department_id: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["organization_member_departments"]["Insert"]>;
+      };
       task_members: {
         Row: {
           task_id: string;
@@ -83,6 +98,7 @@ export type Database = {
           organization_id: string;
           folder_id: string | null;
           project_id: string | null;
+          visible_to_all: boolean;
           file_name: string;
           storage_path: string;
           mime_type: string | null;
@@ -95,6 +111,7 @@ export type Database = {
           organization_id: string;
           folder_id?: string | null;
           project_id?: string | null;
+          visible_to_all?: boolean;
           file_name: string;
           storage_path: string;
           mime_type?: string | null;
@@ -292,6 +309,10 @@ export type Database = {
         current_user_can_access_module: {
           Args: { target_module: string; target_action?: string; target_organization_id?: string | null };
           Returns: boolean;
+        };
+        replace_member_departments: {
+          Args: { target_organization_id: string; target_user_id: string; target_department_ids: string[] };
+          Returns: string[];
         };
       };
     };

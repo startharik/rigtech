@@ -34,7 +34,7 @@ Apply the document-management migration in `supabase/migrations` before using th
 
 ## Roles and module access
 
-Migration `20261005160000_module_roles_and_access.sql` adds organization-specific roles with separate View and Manage permissions for each module. Admin accounts retain full access; custom roles are enforced by both the application and Supabase row-level security policies. Apply the migration before deploying the updated web app, then deploy the updated `create-team-member` Edge Function:
+Migration `20261005160000_module_roles_and_access.sql` adds organization-specific roles with separate View and Manage permissions for each module. Migration `20261005230000_notes_document_sharing_and_member_departments.sql` fixes sticky-note creation access, adds workspace-wide document sharing, and allows employees to belong to multiple departments. Shared documents can be opened by any workspace member, including client portal accounts; private documents remain permission-controlled. Admin accounts retain full access; custom roles are enforced by both the application and Supabase row-level security policies. Apply pending migrations before deploying the updated web app, then deploy the updated `create-team-member` Edge Function:
 
 ```powershell
 supabase db push

@@ -27,6 +27,7 @@ type WorkspaceDocument = {
   storage_path: string;
   folder_id: string | null;
   project_id: string | null;
+  visible_to_all: boolean;
   mime_type: string | null;
   file_size: number;
   created_at: string;
@@ -36,7 +37,7 @@ type DocumentProject = { id: string; name: string };
 type DocumentRole = "admin" | "manager" | "supervisor" | "employee" | "client";
 type DocumentMessage = { kind: "error" | "success"; text: string };
 
-const documentFields = "id, file_name, storage_path, folder_id, project_id, mime_type, file_size, created_at";
+const documentFields = "id, file_name, storage_path, folder_id, project_id, visible_to_all, mime_type, file_size, created_at";
 const maxFileSize = 50 * 1024 * 1024;
 
 const formatFileSize = (bytes: number) => {
@@ -53,8 +54,8 @@ const safeFileName = (value: string) =>
 export default function DocumentManagement({
   organizationId,
   role,
-  canManageOverride = false,
-  canDeleteAnyOverride = false,
+  canManageOverride,
+  canDeleteAnyOverride,
   projects,
 }: {
   organizationId: string;
@@ -75,10 +76,11 @@ export default function DocumentManagement({
   const [projectFilter, setProjectFilter] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [uploadProjectId, setUploadProjectId] = useState("");
+  const [uploadVisibleToAll, setUploadVisibleToAll] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
-  const canManage = canManageOverride || role === "admin" || role === "manager" || role === "supervisor";
-  const canDeleteAny = canDeleteAnyOverride || role === "admin" || role === "manager" || role === "supervisor";
+  const canManage = canManageOverride ?? (role === "admin" || role === "manager" || role === "supervisor");
+  const canDeleteAny = canDeleteAnyOverride ?? (role === "admin" || role === "manager" || role === "supervisor");
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -127,7 +129,7 @@ export default function DocumentManagement({
 
   const visibleFolders = folders.filter((folder) => folder.parent_folder_id === currentFolderId);
   const visibleDocuments = documents.filter((document) => {
-    if (document.folder_id !== currentFolderId) return false;
+    if (document.folder_id !== currentFolderId && !(currentFolderId === null && document.visible_to_all)) return false;
     if (projectFilter === "unlinked" && document.project_id) return false;
     if (projectFilter && projectFilter !== "unlinked" && document.project_id !== projectFilter) return false;
     const query = searchTerm.trim().toLowerCase();
@@ -182,6 +184,7 @@ export default function DocumentManagement({
         storage_path: storagePath,
         folder_id: currentFolderId,
         project_id: uploadProjectId || null,
+        visible_to_all: uploadVisibleToAll,
         mime_type: file.type || null,
         file_size: file.size,
       });
@@ -203,6 +206,7 @@ export default function DocumentManagement({
     }
 
     setSelectedFiles([]);
+    setUploadVisibleToAll(false);
     const fileInput = document.getElementById("document-upload-input");
     if (fileInput instanceof HTMLInputElement) fileInput.value = "";
     await loadDocuments();
@@ -227,6 +231,19 @@ export default function DocumentManagement({
       return;
     }
     setDocuments((current) => current.map((document) => document.id === item.id ? data as WorkspaceDocument : document));
+  };
+
+  const handleVisibilityChange = async (item: WorkspaceDocument, visibleToAll: boolean) => {
+    setMessage(null);
+    const { data, error } = await supabase.from("workspace_documents").update({
+      visible_to_all: visibleToAll,
+    }).eq("id", item.id).select(documentFields).single();
+    if (error || !data) {
+      setMessage({ kind: "error", text: `Unable to update document visibility: ${error?.message ?? "No document details were returned."}` });
+      return;
+    }
+    setDocuments((current) => current.map((document) => document.id === item.id ? data as WorkspaceDocument : document));
+    setMessage({ kind: "success", text: visibleToAll ? "Document shared with internal workspace members." : "Document sharing turned off." });
   };
 
   const handleDownload = async (item: WorkspaceDocument) => {
@@ -295,6 +312,10 @@ export default function DocumentManagement({
           </label>
           <button type="submit" disabled={uploadBusy || !selectedFiles.length} className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-4 w-4" /> {uploadBusy ? "Uploading…" : `Upload${selectedFiles.length ? ` ${selectedFiles.length}` : ""}`}</button>
         </div>
+        <label className="mt-3 inline-flex cursor-pointer items-start gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+          <input type="checkbox" checked={uploadVisibleToAll} onChange={(event) => setUploadVisibleToAll(event.target.checked)} className="mt-0.5 h-4 w-4 accent-sky-700" />
+          <span><span className="block font-semibold">Visible to all workspace members</span><span className="mt-0.5 block text-xs text-slate-500">Allow employees and client portal users to see and download it, including from a folder.</span></span>
+        </label>
         {selectedFiles.length > 0 && <div className="mt-2 text-xs text-slate-500">{selectedFiles.map((file) => file.name).join(", ")}</div>}
       </form>}
 
@@ -335,12 +356,13 @@ export default function DocumentManagement({
           {visibleDocuments.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[780px] border-collapse text-left text-sm">
-                <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-4 py-3">Document</th><th className="px-4 py-3">Project</th><th className="px-4 py-3">Size</th><th className="px-4 py-3">Uploaded</th><th className="px-4 py-3">Actions</th></tr></thead>
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-4 py-3">Document</th><th className="px-4 py-3">Project</th><th className="px-4 py-3">Visible to all</th><th className="px-4 py-3">Size</th><th className="px-4 py-3">Uploaded</th><th className="px-4 py-3">Actions</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {visibleDocuments.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/70">
                       <td className="max-w-sm px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><FileText className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate font-semibold text-slate-900" title={item.file_name}>{item.file_name}</span></div></td>
-                      <td className="px-4 py-3"><select value={item.project_id ?? ""} onChange={(event) => void handleProjectChange(item, event.target.value)} aria-label={`Project tag for ${item.file_name}`} className="max-w-52 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-sky-400"><option value="">No project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></td>
+                      <td className="px-4 py-3">{canManage ? <select value={item.project_id ?? ""} onChange={(event) => void handleProjectChange(item, event.target.value)} aria-label={`Project tag for ${item.file_name}`} className="max-w-52 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none focus:border-sky-400"><option value="">No project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select> : projectsById.get(item.project_id ?? "") ?? "No project"}</td>
+                      <td className="px-4 py-3">{canManage ? <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={item.visible_to_all} onChange={(event) => void handleVisibilityChange(item, event.target.checked)} className="h-4 w-4 accent-sky-700" />Share</label> : item.visible_to_all ? <span className="text-xs font-semibold text-emerald-700">Shared</span> : <span className="text-xs text-slate-400">Private</span>}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-500">{formatFileSize(Number(item.file_size))}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-500">{formatDocumentDate(item.created_at)}</td>
                       <td className="px-4 py-3"><div className="flex items-center gap-1">

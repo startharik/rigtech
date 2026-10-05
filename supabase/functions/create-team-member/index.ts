@@ -11,6 +11,7 @@ type TeamMemberRequest = {
   member_id?: string;
   client_name?: string;
   department_id?: string | null;
+  department_ids?: string[];
   member_name?: string;
   member_email?: string;
   member_password?: string;
@@ -163,7 +164,6 @@ async function handleRequest(request: Request): Promise<Response> {
     if (profileUpdate.error) return json({ error: profileUpdate.error.message }, 500);
     const membershipUpdate = await admin.from("organization_members").update({
       role: memberRole,
-      department_id: payload.department_id || null,
       team_id: payload.team_id || null,
       availability_status: payload.availability_status ?? "available",
       capacity_hours_per_week: payload.capacity_hours_per_week ?? 40,
@@ -171,7 +171,14 @@ async function handleRequest(request: Request): Promise<Response> {
       custom_role_id: payload.custom_role_id || null,
     }).eq("organization_id", requesterMembership.organization_id).eq("user_id", payload.member_id);
     if (membershipUpdate.error) return json({ error: membershipUpdate.error.message }, 500);
-    return json({ member: { id: payload.member_id, name: memberName, email: memberEmail, role: memberRole, custom_role_id: payload.custom_role_id || null, department_id: payload.department_id || null, team_id: payload.team_id || null, availability_status: payload.availability_status ?? "available", capacity_hours_per_week: payload.capacity_hours_per_week ?? 40, max_active_tasks: payload.max_active_tasks ?? 10 } });
+    const departmentIds = payload.department_ids ?? (payload.department_id ? [payload.department_id] : []);
+    const departmentResult = await admin.rpc("replace_member_departments", {
+      target_organization_id: requesterMembership.organization_id,
+      target_user_id: payload.member_id,
+      target_department_ids: departmentIds,
+    });
+    if (departmentResult.error) return json({ error: departmentResult.error.message }, 400);
+    return json({ member: { id: payload.member_id, name: memberName, email: memberEmail, role: memberRole, custom_role_id: payload.custom_role_id || null, department_id: departmentIds[0] ?? null, department_ids: departmentResult.data, team_id: payload.team_id || null, availability_status: payload.availability_status ?? "available", capacity_hours_per_week: payload.capacity_hours_per_week ?? 40, max_active_tasks: payload.max_active_tasks ?? 10 } });
   }
 
   if (payload.custom_role_id) {
@@ -240,6 +247,20 @@ async function handleRequest(request: Request): Promise<Response> {
     return json({ error: organizationMemberError.message }, 500);
   }
 
+  const departmentIds = payload.department_ids ?? (payload.department_id ? [payload.department_id] : []);
+  if (!isClient) {
+    const departmentResult = await admin.rpc("replace_member_departments", {
+      target_organization_id: requesterMembership.organization_id,
+      target_user_id: createdUser.user.id,
+      target_department_ids: departmentIds,
+    });
+    if (departmentResult.error) {
+      const cleanupUser = await admin.auth.admin.deleteUser(createdUser.user.id);
+      if (cleanupUser.error) console.error("Unable to clean up auth user after department assignment failed", cleanupUser.error);
+      return json({ error: departmentResult.error.message }, 400);
+    }
+  }
+
   if (client) {
     const clientUserResult = await admin.from("client_users").insert({
       client_id: client.id,
@@ -263,6 +284,7 @@ async function handleRequest(request: Request): Promise<Response> {
       role: isClient ? "client" : memberRole,
       custom_role_id: payload.custom_role_id || null,
       department_id: payload.department_id || null,
+      department_ids: isClient ? [] : departmentIds,
     },
   });
 }
