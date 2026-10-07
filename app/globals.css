@@ -1,10 +1,36 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f7f5;
+  --background: #f9fafb;
   --surface: #ffffff;
-  --foreground: #0f172a;
-  --muted: #64748b;
+  --foreground: #111827;
+  --muted: #4b5563;
+  --brand-primary: #c29337;
+  --brand-secondary: #111827;
+  --brand-tertiary: #4b5563;
+  --brand-neutral: #e5e7eb;
+  --color-slate-50: #f9fafb;
+  --color-slate-100: #f3f4f6;
+  --color-slate-200: #e5e7eb;
+  --color-slate-300: #d1d5db;
+  --color-slate-400: #9ca3af;
+  --color-slate-500: #6b7280;
+  --color-slate-600: #4b5563;
+  --color-slate-700: #374151;
+  --color-slate-800: #1f2937;
+  --color-slate-900: #111827;
+  --color-slate-950: #111827;
+  --color-emerald-50: #fbf7ef;
+  --color-emerald-100: #f5ecd8;
+  --color-emerald-200: #ebd8af;
+  --color-emerald-300: #dec184;
+  --color-emerald-400: #d1ab59;
+  --color-emerald-500: #c29337;
+  --color-emerald-600: #a77c2f;
+  --color-emerald-700: #8e6728;
+  --color-emerald-800: #755321;
+  --color-emerald-900: #5b401a;
+  --color-emerald-950: #422e13;
 }
 
 @theme inline {
@@ -19,7 +45,7 @@ html { scroll-behavior: smooth; }
 html, body { min-width: 320px; }
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, rgba(16,185,129,0.08), transparent 20%), var(--background);
+  background: radial-gradient(circle at top left, color-mix(in srgb, var(--brand-primary) 8%, transparent), transparent 20%), var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   overscroll-behavior-x: none;
@@ -31,8 +57,7 @@ input, select, textarea { color: var(--foreground); }
 ::-webkit-scrollbar-thumb { border-radius: 9999px; background: rgba(100, 116, 139, 0.35); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-.dark body { background: #0f172a; color: #e2e8f0; }
-.dark .bg-\[\#f4f7f5\] { background: #0f172a; }
+.dark body { background: #111827; color: #e2e8f0; }
 .dark .bg-white { background-color: #111827; }
 .dark .bg-slate-50 { background-color: #1e293b; }
 .dark .bg-slate-100 { background-color: #334155; }

@@ -74,5 +74,8 @@ values ('ORGANIZATION_UUID', 'AUTH_USER_UUID', 'admin');
   (or from task status when no subtasks exist).
 - Organization admins and managers can also create a client portal login with
   an email and initial password. The client is linked to the account through
-  `client_users`; client accounts can only read tasks marked `client_visible`
-  for their linked client.
+  `client_users`; client accounts see only projects assigned to their linked
+  client, and can read only tasks marked `client_visible` for that client.
+- Employees can be assigned to more than one department. Their assignments are
+  stored in `organization_member_departments`, with `organization_members.department_id`
+  retained as the primary/legacy department.

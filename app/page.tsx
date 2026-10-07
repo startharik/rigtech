@@ -225,6 +225,9 @@ const formatTaskDueDate = (value: string) => {
   };
 };
 
+const getLocalDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 const memberRoleLabels = {
   admin: "Admin",
   manager: "Manager",
@@ -305,6 +308,7 @@ const roleCanView = (
   assignedRole: WorkspaceRole | undefined,
   targetView: WorkspaceView,
 ) => {
+  if (role === "client") return targetView === "projects";
   if (targetView === "documents") return role !== null;
   if (role === "admin") return true;
   const access = assignedRole?.permissions[viewModule(targetView)] ?? defaultModuleAccess(role, viewModule(targetView));
@@ -423,20 +427,24 @@ function MobileTaskTracker({
   onStatusChange,
   onToggleComplete,
   canEdit,
+  emptyTitle,
+  emptyDescription,
 }: {
   tasks: Task[];
   onOpen: (task: Task) => void;
   onStatusChange: (task: Task, status: TaskStatus) => void;
   onToggleComplete: (task: Task) => void;
   canEdit: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   return (
     <div className="space-y-3 md:hidden">
       {tasks.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-10 text-center">
           <CircleDashed className="mx-auto h-8 w-8 text-slate-400" />
-          <h2 className="mt-3 text-sm font-bold text-slate-800">No tasks match these filters</h2>
-          <p className="mt-1 text-xs text-slate-500">Try another status or priority.</p>
+          <h2 className="mt-3 text-sm font-bold text-slate-900">{emptyTitle ?? "No tasks match these filters"}</h2>
+          <p className="mt-1 text-xs text-slate-600">{emptyDescription ?? "Try another status or priority."}</p>
         </div>
       ) : tasks.map((task) => {
         const due = formatTaskDueDate(task.due);
@@ -449,7 +457,7 @@ function MobileTaskTracker({
                 onClick={() => onToggleComplete(task)}
                 disabled={!canEdit}
                 aria-label={`${task.status === "Completed" ? "Reopen" : "Complete"} ${task.title}`}
-                className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition ${task.status === "Completed" ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-transparent"} disabled:cursor-default`}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition ${task.status === "Completed" ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-transparent"} disabled:cursor-default disabled:opacity-70`}
               >
                 <Check className="h-3.5 w-3.5" />
               </button>
@@ -463,7 +471,14 @@ function MobileTaskTracker({
 
             <button type="button" onClick={() => onOpen(task)} aria-label={`Open ${task.title}`} className="block w-full px-3.5 pb-3 text-left">
               <span className="flex items-center gap-2">
-                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                <span
+                  role="progressbar"
+                  aria-label={`Progress for ${task.title}`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.max(0, Math.min(100, task.progress))}
+                  className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"
+                >
                   <span className={`block h-full rounded-full ${task.status === "Completed" ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${Math.max(0, Math.min(100, task.progress))}%` }} />
                 </span>
                 <span className="w-9 text-right text-[10px] font-semibold text-slate-500">{task.progress}%</span>
@@ -488,7 +503,7 @@ function MobileTaskTracker({
                   onChange={(event) => onStatusChange(task, event.target.value as TaskStatus)}
                   onClick={(event) => event.stopPropagation()}
                   aria-label={`Change status for ${task.title}`}
-                  className="max-w-32 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700"
+                  className="min-h-11 max-w-36 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
                 >
                   {(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
@@ -584,10 +599,23 @@ function EmptyDirectory({ label }: { label: string }) {
   );
 }
 
-function TaskAssigneeSelect({ members, currentUserId }: { members: WorkspaceMember[]; currentUserId: string }) {
-  const [selectedIds, setSelectedIds] = useState(() => members
+function TaskAssigneeSelect({
+  members,
+  currentUserId,
+  selectedIds: selectedIdsProp,
+  onSelectionChange,
+  ariaLabel,
+}: {
+  members: WorkspaceMember[];
+  currentUserId: string;
+  selectedIds?: string[];
+  onSelectionChange?: (selectedIds: string[]) => void;
+  ariaLabel?: string;
+}) {
+  const [internalSelectedIds, setInternalSelectedIds] = useState(() => members
     .filter((member) => member.id === currentUserId)
     .map((member) => member.id));
+  const selectedIds = selectedIdsProp ?? internalSelectedIds;
   const [search, setSearch] = useState("");
   const selectedMembers = members.filter((member) => selectedIds.includes(member.id));
   const filteredMembers = members.filter((member) =>
@@ -595,14 +623,16 @@ function TaskAssigneeSelect({ members, currentUserId }: { members: WorkspaceMemb
   );
 
   const toggleMember = (memberId: string) => {
-    setSelectedIds((current) => current.includes(memberId)
-      ? current.filter((id) => id !== memberId)
-      : [...current, memberId]);
+    const nextSelectedIds = selectedIds.includes(memberId)
+      ? selectedIds.filter((id) => id !== memberId)
+      : [...selectedIds, memberId];
+    if (onSelectionChange) onSelectionChange(nextSelectedIds);
+    else setInternalSelectedIds(nextSelectedIds);
   };
 
   return (
     <details className="group relative mt-2">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm outline-none transition hover:border-slate-300 focus-visible:ring-2 focus-visible:ring-emerald-500 [&::-webkit-details-marker]:hidden">
+      <summary aria-label={ariaLabel} className="flex min-h-11 cursor-pointer list-none items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left shadow-sm outline-none transition hover:border-slate-300 focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {selectedMembers.length ? (
             <>
@@ -668,6 +698,12 @@ const toTaskPriority = (priority: unknown): TaskPriority =>
 export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const taskDetailCloseRef = useRef<HTMLButtonElement>(null);
+  const createTaskCloseRef = useRef<HTMLButtonElement>(null);
+  const projectDetailCloseRef = useRef<HTMLButtonElement>(null);
+  const shareNoteCloseRef = useRef<HTMLButtonElement>(null);
+  const editMemberCloseRef = useRef<HTMLButtonElement>(null);
+  const mobileNavCloseRef = useRef<HTMLButtonElement>(null);
   const [view, setView] = useState<WorkspaceView>("dashboard");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -677,6 +713,11 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedNavGroups, setCollapsedNavGroups] = useState<string[]>([]);
   const [syncMessage, setSyncMessage] = useState("");
+  useEffect(() => {
+    if (!syncMessage) return;
+    const timeout = window.setTimeout(() => setSyncMessage(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [syncMessage]);
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
@@ -693,6 +734,13 @@ export default function Home() {
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [projectDetailBusy, setProjectDetailBusy] = useState(false);
+  const [showMobileProjectForm, setShowMobileProjectForm] = useState(false);
+  const [showMobileDirectoryForm, setShowMobileDirectoryForm] = useState(false);
+  const [directorySearch, setDirectorySearch] = useState("");
+  const [employeeRoleFilter, setEmployeeRoleFilter] = useState("all");
+  const [employeeDepartmentFilter, setEmployeeDepartmentFilter] = useState("all");
+  const [notificationFilter, setNotificationFilter] = useState<"all" | "unread">("all");
+  const [showNoteComposer, setShowNoteComposer] = useState(false);
   const [milestoneName, setMilestoneName] = useState("");
   const [milestoneDueDate, setMilestoneDueDate] = useState("");
   const [taskLayout, setTaskLayout] = useState<"list" | "kanban">("list");
@@ -732,6 +780,8 @@ export default function Home() {
   const [newSubtasks, setNewSubtasks] = useState<string[]>([]);
   const [subtaskParentId, setSubtaskParentId] = useState<string | null>(null);
   const [subtaskDescription, setSubtaskDescription] = useState("");
+  const [taskAssigneeDraft, setTaskAssigneeDraft] = useState<string[]>([]);
+  const [assigneeBusy, setAssigneeBusy] = useState(false);
   const [taskDescription, setTaskDescription] = useState("");
   const [descriptionBusy, setDescriptionBusy] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
@@ -767,10 +817,12 @@ export default function Home() {
   const moduleAccess = (module: string): ModuleAccess =>
     currentCustomRole?.permissions[module] ?? defaultModuleAccess(currentRole, module);
   const canViewModule = (module: string) => moduleAccess(module).view || moduleAccess(module).manage;
-  const canManageModule = (module: string) => moduleAccess(module).manage;
+  const canManageModule = (module: string) => currentRole !== "client" && moduleAccess(module).manage;
   const canAssignCustomRoles = currentRole === "admin" || currentRole === "manager";
   const canView = (targetView: WorkspaceView) =>
-    canViewModule(viewModule(targetView)) || (targetView === "documents" && currentRole !== null);
+    currentRole === "client"
+      ? targetView === "projects"
+      : canViewModule(viewModule(targetView)) || (targetView === "documents" && currentRole !== null);
   const visibleNavItems = navItems.filter(({ id }) => canView(id));
 
   useEffect(() => {
@@ -807,7 +859,7 @@ export default function Home() {
 
     void Promise.all([
       StatusBar.setOverlaysWebView({ overlay: false }),
-      StatusBar.setBackgroundColor({ color: "#f4f7f5" }),
+      StatusBar.setBackgroundColor({ color: "#f9fafb" }),
       StatusBar.setStyle({ style: Style.Dark }),
     ]).catch((error: unknown) => {
       console.error("Unable to configure the Android status bar.", error);
@@ -962,18 +1014,25 @@ export default function Home() {
           ? requestedView
           : navItems.find(({ id }) => roleCanView(membership.role, assignedRole, id))?.id ?? "dashboard";
         setView(nextView);
-        const memberResult = await supabase
+        let memberQuery = supabase
           .from("organization_members")
           .select("user_id, department_id, team_id, role, custom_role_id, availability_status, capacity_hours_per_week, max_active_tasks")
-          .eq("organization_id", membership.organization_id)
-          .neq("role", "client");
-        const legacyMemberResult = memberResult.error && /(team_id|availability_status|capacity_hours_per_week|max_active_tasks)/.test(memberResult.error.message)
-          ? await supabase
+          .eq("organization_id", membership.organization_id);
+        memberQuery = membership.role === "client"
+          ? memberQuery.eq("user_id", user.id)
+          : memberQuery.neq("role", "client");
+        const memberResult = await memberQuery;
+        let legacyMemberResult = null;
+        if (memberResult.error && /(team_id|availability_status|capacity_hours_per_week|max_active_tasks)/.test(memberResult.error.message)) {
+          let legacyMemberQuery = supabase
             .from("organization_members")
             .select("user_id, department_id, role")
-            .eq("organization_id", membership.organization_id)
-            .neq("role", "client")
-          : null;
+            .eq("organization_id", membership.organization_id);
+          legacyMemberQuery = membership.role === "client"
+            ? legacyMemberQuery.eq("user_id", user.id)
+            : legacyMemberQuery.neq("role", "client");
+          legacyMemberResult = await legacyMemberQuery;
+        }
         const memberRows = (legacyMemberResult?.data ?? memberResult.data) as Array<{
           user_id: string;
           department_id: string | null;
@@ -1233,6 +1292,73 @@ export default function Home() {
     void loadAttachments();
   }, [selectedTask]);
 
+  const activeDialogType = selectedProject
+    ? "project"
+    : selectedTask
+      ? "details"
+      : showCreate
+        ? "create"
+        : sharingNote
+          ? "share-note"
+          : editingMember
+            ? "edit-member"
+            : mobileNavOpen
+              ? "mobile-nav"
+              : null;
+  useEffect(() => {
+    if (!activeDialogType) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const manageDialogKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (activeDialogType === "project") setSelectedProject(null);
+        else if (activeDialogType === "details") setSelectedTask(null);
+        else if (activeDialogType === "create") setShowCreate(false);
+        else if (activeDialogType === "share-note") setSharingNote(null);
+        else if (activeDialogType === "edit-member") setEditingMember(null);
+        else if (activeDialogType === "mobile-nav") setMobileNavOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+      const focusableElements = dialog?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusableElements?.length) return;
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", manageDialogKeyboard);
+    const focusFrame = window.    requestAnimationFrame(() => {
+      const initialFocus = activeDialogType === "project"
+        ? projectDetailCloseRef.current
+        : activeDialogType === "details"
+          ? taskDetailCloseRef.current
+          : activeDialogType === "create"
+            ? createTaskCloseRef.current
+            : activeDialogType === "share-note"
+              ? shareNoteCloseRef.current
+              : activeDialogType === "edit-member"
+                ? editMemberCloseRef.current
+                : mobileNavCloseRef.current;
+      initialFocus?.focus();
+    });
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", manageDialogKeyboard);
+      window.cancelAnimationFrame(focusFrame);
+      previouslyFocused?.focus();
+    };
+  }, [activeDialogType]);
+
   const filteredTasks = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
@@ -1258,6 +1384,42 @@ export default function Home() {
     );
   }, [notes, noteSearch, noteColorFilter]);
 
+  const filteredNotifications = useMemo(
+    () => notificationFilter === "unread"
+      ? notifications.filter((notification) => !notification.isRead)
+      : notifications,
+    [notifications, notificationFilter],
+  );
+
+  const filteredDirectoryMembers = useMemo(() => {
+    const query = directorySearch.trim().toLowerCase();
+    return members.filter((member) => {
+      const departmentNames = member.departmentIds
+        .map((departmentId) => departments.find((department) => department.id === departmentId)?.name ?? "")
+        .join(" ");
+      const customRoleName = workspaceRoles.find((role) => role.id === member.customRoleId)?.name ?? "";
+      return (employeeRoleFilter === "all" || member.role === employeeRoleFilter) &&
+        (employeeDepartmentFilter === "all" || member.departmentIds.includes(employeeDepartmentFilter)) &&
+        (!query || `${member.name} ${member.email} ${departmentNames} ${customRoleName} ${memberRoleLabels[member.role]}`.toLowerCase().includes(query));
+    });
+  }, [members, departments, workspaceRoles, directorySearch, employeeRoleFilter, employeeDepartmentFilter]);
+
+  const filteredDirectoryClients = useMemo(() => {
+    const query = directorySearch.trim().toLowerCase();
+    return clients.filter((client) => {
+      const customRoleName = workspaceRoles.find((role) => role.id === client.customRoleId)?.name ?? "";
+      const projectNames = projects.filter((project) => project.clientId === client.id).map((project) => project.name).join(" ");
+      return !query || `${client.name} ${client.contactEmail ?? ""} ${customRoleName} ${projectNames}`.toLowerCase().includes(query);
+    });
+  }, [clients, workspaceRoles, projects, directorySearch]);
+
+  const filteredDirectoryDepartments = useMemo(() => {
+    const query = directorySearch.trim().toLowerCase();
+    return departments.filter((department) =>
+      !query || department.name.toLowerCase().includes(query),
+    );
+  }, [departments, directorySearch]);
+
   const openProjectDetails = async (project: WorkspaceProject) => {
     setProjectDetailBusy(true);
     setSyncMessage("");
@@ -1273,7 +1435,7 @@ export default function Home() {
     }
 
     const taskIds = (taskRows ?? []).map((task) => String(task.id));
-    const { data: attachmentRows, error: attachmentError } = taskIds.length
+    const { data: attachmentRows, error: attachmentError } = currentRole !== "client" && taskIds.length
       ? await supabase.from("attachments").select("id, file_name, mime_type, storage_path, task_id, created_at").in("task_id", taskIds).order("created_at", { ascending: false })
       : { data: [], error: null };
     if (attachmentError) {
@@ -1282,7 +1444,7 @@ export default function Home() {
       return;
     }
 
-    const { data: commentRows, error: commentError } = taskIds.length
+    const { data: commentRows, error: commentError } = currentRole !== "client" && taskIds.length
       ? await supabase.from("comments").select("id, body, created_at, author_id, task_id").in("task_id", taskIds).order("created_at", { ascending: true })
       : { data: [], error: null };
     if (commentError) {
@@ -1324,7 +1486,7 @@ export default function Home() {
         title: String(task.title ?? "Untitled task"),
         status: toTaskStatus(task.status),
         priority: toTaskPriority(task.priority),
-        assignee: String(task.assignee_name ?? "Unassigned"),
+        assignee: currentRole === "client" ? "Rigtech team" : String(task.assignee_name ?? "Unassigned"),
         due: String(task.due_date ?? "No due date"),
         description: String(task.description ?? ""),
         parentTaskId: typeof task.parent_task_id === "string" ? task.parent_task_id : null,
@@ -1386,6 +1548,13 @@ export default function Home() {
     { label: "Completed", value: String(tasks.filter((task) => task.status === "Completed").length), subtext: "Completed workspace tasks", tone: "bg-white text-slate-900" },
     { label: "Team capacity", value: tasks.length ? "—" : "0", subtext: tasks.length ? "Capacity tracking coming next" : "No task data yet", tone: "bg-white text-slate-900" },
   ];
+  const dashboardTodayKey = getLocalDateKey(currentDate ?? new Date());
+  const dueTodayTasks = tasks.filter((task) =>
+    task.status !== "Completed" && (
+      task.due === "Today" ||
+      /^\d{4}-\d{2}-\d{2}/.test(task.due) && task.due.slice(0, 10) === dashboardTodayKey
+    ),
+  );
 
   const executiveMetrics = {
     total: tasks.length,
@@ -1395,11 +1564,35 @@ export default function Home() {
     urgent: tasks.filter((task) => task.priority === "Urgent" && task.status !== "Completed").length,
     completionRate: tasks.length ? Math.round((tasks.filter((task) => task.status === "Completed").length / tasks.length) * 100) : 0,
   };
-  const overdueTasks = tasks.filter((task) => {
-    if (task.status === "Completed" || !task.due || task.due === "This week") return false;
-    const dueDate = new Date(task.due);
-    return !Number.isNaN(dueDate.getTime()) && dueDate.getTime() < currentTime;
-  });
+  const overdueTasks = tasks.filter((task) =>
+    task.status !== "Completed" && formatTaskDueDate(task.due).overdue,
+  );
+  const executiveRiskTasks = tasks.filter((task) =>
+    task.status !== "Completed" &&
+    (formatTaskDueDate(task.due).overdue || task.priority === "Urgent"),
+  ).sort((first, second) =>
+    Number(formatTaskDueDate(second.due).overdue) - Number(formatTaskDueDate(first.due).overdue) ||
+    first.due.localeCompare(second.due),
+  );
+  const executiveMetricCards = [
+    { label: "Completion rate", value: `${executiveMetrics.completionRate}%`, note: `${executiveMetrics.completed} of ${executiveMetrics.total} tasks`, tone: "bg-slate-950 text-white" },
+    { label: "Active workload", value: String(executiveMetrics.active), note: `${executiveMetrics.inProgress} in progress`, tone: "bg-white text-slate-900" },
+    { label: "At-risk tasks", value: String(executiveRiskTasks.length), note: `${overdueTasks.length} overdue · ${executiveMetrics.urgent} urgent`, tone: "bg-amber-50 text-amber-950" },
+    { label: "Team members", value: String(members.length), note: `${projects.length} active projects`, tone: "bg-white text-slate-900" },
+  ];
+  const mobileDashboardTasks = [...tasks]
+    .filter((task) => task.status !== "Completed")
+    .sort((first, second) => {
+      const attentionScore = (task: Task) =>
+        (formatTaskDueDate(task.due).overdue ? 100 : 0) +
+        (task.priority === "Urgent" ? 40 : task.priority === "High" ? 20 : task.priority === "Medium" ? 10 : 0);
+      const attentionDifference = attentionScore(second) - attentionScore(first);
+      if (attentionDifference) return attentionDifference;
+      const firstDue = /^\d{4}-\d{2}-\d{2}/.test(first.due) ? first.due.slice(0, 10) : "9999-99-99";
+      const secondDue = /^\d{4}-\d{2}-\d{2}/.test(second.due) ? second.due.slice(0, 10) : "9999-99-99";
+      return firstDue.localeCompare(secondDue);
+    })
+    .slice(0, 3);
   const teamWorkload = members.map((member) => ({
     ...member,
     activeTasks: tasks.filter((task) => task.assigneeIds?.includes(member.id) && task.status !== "Completed").length,
@@ -1621,9 +1814,62 @@ export default function Home() {
   const openTask = (task: Task) => {
     setSelectedTask(task);
     setTitleDraft(task.title);
+    setTaskAssigneeDraft(task.assigneeIds);
     setTaskDescription(task.description);
     setSubtaskParentId(null);
     setSubtaskDescription("");
+  };
+
+  const handleTaskAssigneesSave = async () => {
+    if (!canManageModule("tasks") || !selectedTask || !user) return;
+    const assigneeIds = [...new Set(taskAssigneeDraft)];
+    setAssigneeBusy(true);
+
+    if (assigneeIds.length) {
+      const { error: assignmentError } = await supabase.from("task_members").upsert(
+        assigneeIds.map((userId) => ({ task_id: selectedTask.supabaseId, user_id: userId })),
+        { onConflict: "task_id,user_id" },
+      );
+      if (assignmentError) {
+        setSyncMessage(`Unable to save task assignees: ${assignmentError.message}`);
+        setAssigneeBusy(false);
+        return;
+      }
+    }
+
+    const { error: taskError } = await supabase.from("tasks").update({
+      assignee_id: assigneeIds[0] ?? null,
+      assigned_to_user_id: assigneeIds[0] ?? null,
+    }).eq("id", selectedTask.supabaseId);
+    if (taskError) {
+      setSyncMessage(`Unable to update the primary task assignee: ${taskError.message}`);
+      setAssigneeBusy(false);
+      return;
+    }
+
+    const deleteQuery = supabase.from("task_members").delete().eq("task_id", selectedTask.supabaseId);
+    const { error: removalError } = assigneeIds.length
+      ? await deleteQuery.not("user_id", "in", `(${assigneeIds.map((id) => `"${id}"`).join(",")})`)
+      : await deleteQuery;
+    if (removalError) {
+      setSyncMessage(`The primary assignee was updated, but the team assignments could not be fully synchronized: ${removalError.message}`);
+      setAssigneeBusy(false);
+      return;
+    }
+
+    const assigneeNames = assigneeIds
+      .map((id) => members.find((member) => member.id === id)?.name)
+      .filter((name): name is string => Boolean(name));
+    const updatedTask = {
+      ...selectedTask,
+      assigneeIds,
+      assignee: assigneeNames.join(", ") || "Unassigned",
+    };
+    setSelectedTask(updatedTask);
+    setTasks((current) => current.map((task) => task.supabaseId === selectedTask.supabaseId ? updatedTask : task));
+    setTaskAssigneeDraft(assigneeIds);
+    setSyncMessage("Task assignments saved.");
+    setAssigneeBusy(false);
   };
 
   const createUserNotification = async (title: string, message: string, type: string, taskId?: string) => {
@@ -2141,6 +2387,8 @@ export default function Home() {
     } else {
       setSyncMessage(`${view === "team" ? "Employee login" : view === "clients" ? "Client" : view === "projects" ? "Project" : "Department"} added to Rigtech Operations.`);
       resetManagementForm();
+      if (view === "projects") setShowMobileProjectForm(false);
+      if (view === "team" || view === "clients" || view === "departments") setShowMobileDirectoryForm(false);
     }
     setManagementBusy(false);
   };
@@ -2345,6 +2593,7 @@ export default function Home() {
       setNoteBody("");
       setNoteColor("yellow");
       setEditingNoteId(null);
+      setShowNoteComposer(false);
       setSyncMessage(editingNoteId ? "Sticky note updated." : "Sticky note saved.");
     } catch (error) {
       console.error("Unable to reach Supabase while saving a sticky note.", error);
@@ -2361,6 +2610,7 @@ export default function Home() {
     setNoteTitle(note.title);
     setNoteBody(note.body);
     setNoteColor(note.color);
+    setShowNoteComposer(true);
     setSyncMessage("");
     document.getElementById("sticky-note-composer")?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
@@ -2384,6 +2634,7 @@ export default function Home() {
 
   const handleDeleteNote = async (note: WorkspaceNote) => {
     if (!canManageModule("notes") || note.authorId !== user?.id) return;
+    if (!window.confirm(`Delete "${note.title || "Untitled note"}"? This cannot be undone.`)) return;
     const { error } = await supabase.from("notes").delete().eq("id", note.id);
     if (error) {
       setSyncMessage(`Unable to delete sticky note: ${error.message}`);
@@ -2397,18 +2648,32 @@ export default function Home() {
   const handleShareInternally = async (note: WorkspaceNote, recipient: WorkspaceMember) => {
     if (!user || !canManageModule("notes") || note.authorId !== user.id) return;
     setShareBusy(true);
-    const { error } = await supabase.from("note_shares").upsert({
-      note_id: note.id,
-      user_id: recipient.id,
-      shared_by: user.id,
-    });
-    if (error) {
-      setSyncMessage(`Unable to share sticky note: ${error.message}`);
-    } else {
-      setSyncMessage(`Note shared with ${recipient.name}.`);
-      setSharingNote(null);
+    try {
+      const { error } = await supabase.from("note_shares").upsert({
+        note_id: note.id,
+        user_id: recipient.id,
+        shared_by: user.id,
+      });
+      if (error) {
+        setSyncMessage(`Unable to share sticky note: ${error.message}`);
+      } else {
+        setSyncMessage(`Note shared with ${recipient.name}.`);
+        setSharingNote(null);
+      }
+    } catch (error) {
+      setSyncMessage(`Unable to share sticky note: ${error instanceof Error ? error.message : "Unexpected network error."}`);
+    } finally {
+      setShareBusy(false);
     }
-    setShareBusy(false);
+  };
+
+  const handleCopyNote = async (note: WorkspaceNote) => {
+    try {
+      await navigator.clipboard.writeText(`${note.title || "Sticky note"}\n\n${note.body}`);
+      setSyncMessage("Sticky note copied to your clipboard.");
+    } catch (error) {
+      setSyncMessage(`Unable to copy sticky note: ${error instanceof Error ? error.message : "Clipboard access is unavailable."}`);
+    }
   };
 
   const handleShareExternally = async (note: WorkspaceNote) => {
@@ -2429,7 +2694,7 @@ export default function Home() {
 
   const pageTitle =
     view === "dashboard"
-      ? "Dashboard"
+      ? "Task overview"
       : view === "executive"
         ? "Executive overview"
       : view === "my-tasks"
@@ -2510,59 +2775,70 @@ export default function Home() {
     );
   });
   if (!authReady) {
-    return <div className="flex min-h-screen items-center justify-center bg-[#f4f7f5] text-sm text-slate-500">Loading your secure workspace…</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-slate-500">Loading your secure workspace…</div>;
   }
 
   if (!user) {
     return (
-      <main className="relative flex min-h-[100svh] items-center justify-center overflow-hidden bg-[#f3f4f1] px-4 py-8 text-slate-900 sm:px-6">
-        <div aria-hidden="true" className="pointer-events-none absolute -right-32 -top-40 h-[32rem] w-[32rem] rounded-full border border-emerald-900/[0.06]" />
-        <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-28 h-[24rem] w-[24rem] rounded-full border border-emerald-900/[0.06]" />
-        <section className="relative w-full max-w-[400px] rounded-2xl border border-black/[0.06] bg-white p-6 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.24)] sm:p-9">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-[#10251f]">
-              <Image src="/logo.png" alt="" width={900} height={900} priority className="absolute left-1/2 top-1/2 h-24 w-24 max-w-none -translate-x-1/2 -translate-y-1/2 object-contain" />
-            </div>
-            <div>
-              <div className="text-sm font-bold tracking-[0.12em] text-slate-900">RIGTECH</div>
-              <div className="mt-1 text-[10px] tracking-wide text-slate-500">Engineering</div>
+      <main className="grid min-h-[100svh] bg-[#f6f7f4] text-slate-900 lg:grid-cols-[0.9fr_1.1fr]">
+        <aside className="relative hidden min-h-[100svh] overflow-hidden bg-slate-950 lg:flex lg:items-center lg:justify-center">
+          <div aria-hidden="true" className="absolute inset-0 opacity-[0.07] [background-image:linear-gradient(rgba(255,255,255,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.14)_1px,transparent_1px)] [background-size:64px_64px]" />
+          <div aria-hidden="true" className="absolute -left-48 -top-48 h-[42rem] w-[42rem] rounded-full border border-white/[0.08]" />
+          <div aria-hidden="true" className="absolute -left-28 -top-28 h-[32rem] w-[32rem] rounded-full border border-white/[0.08]" />
+          <div className="relative flex h-full w-full items-center justify-center">
+            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} priority className="w-[min(62%,420px)] object-contain" />
+          </div>
+          <div aria-hidden="true" className="absolute bottom-0 left-0 h-1 w-full bg-[#b9953b]" />
+        </aside>
+
+        <section className="flex min-h-[100svh] flex-col bg-[#f6f7f4] px-6 py-4 sm:px-12 sm:py-7 lg:px-16 xl:px-24">
+          <header className="flex justify-center lg:hidden">
+            <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} priority className="h-80 w-80 object-contain" />
+          </header>
+          <div className="flex flex-1 items-center justify-center py-2 sm:py-8">
+            <div className="w-full max-w-[400px]">
+              <div className="mb-6 sm:mb-9">
+                <div className="mb-3 h-1 w-10 rounded-full bg-[#b9953b]" />
+                <h1 className="text-3xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-[34px]">Welcome back</h1>
+                <p className="mt-2 text-sm text-slate-500">Sign in to continue.</p>
+              </div>
+              <form onSubmit={handleAuthSubmit} className="space-y-4 sm:space-y-6">
+                <label className="block">
+                  <span className="text-sm font-medium text-slate-700">Email address</span>
+                  <input
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    required
+                    type="email"
+                    autoComplete="username"
+                    placeholder="you@company.com"
+                    className="mt-2 min-h-14 w-full rounded-xl border border-slate-300 bg-white px-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-emerald-800 focus:ring-4 focus:ring-emerald-800/10 lg:min-h-13 lg:rounded-lg lg:text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-slate-700">Password</span>
+                  <input
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    required
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    className="mt-2 min-h-14 w-full rounded-xl border border-slate-300 bg-white px-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-emerald-800 focus:ring-4 focus:ring-emerald-800/10 lg:min-h-13 lg:rounded-lg lg:text-sm"
+                  />
+                </label>
+                {authError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{authError}</div>}
+                <button disabled={authBusy} type="submit" className="min-h-14 w-full rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60 lg:min-h-13 lg:rounded-lg">
+                  {authBusy ? "Signing in…" : "Sign in"}
+                </button>
+              </form>
+              <p className="mt-5 text-sm text-slate-500 sm:mt-8">Need access? Contact your workspace administrator.</p>
             </div>
           </div>
-          <div className="mb-7">
-            <h1 className="text-2xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-[28px]">Welcome back</h1>
-            <p className="mt-1.5 text-sm text-slate-500">Sign in to continue.</p>
-          </div>
-          <form onSubmit={handleAuthSubmit} className="space-y-5">
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">Email address</span>
-              <input
-                value={authEmail}
-                onChange={(event) => setAuthEmail(event.target.value)}
-                required
-                type="email"
-                autoComplete="username"
-                placeholder="you@company.com"
-                className="mt-1.5 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-700 focus:ring-4 focus:ring-emerald-700/10"
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">Password</span>
-              <input
-                value={authPassword}
-                onChange={(event) => setAuthPassword(event.target.value)}
-                required
-                type="password"
-                autoComplete="current-password"
-                placeholder="Enter your password"
-                className="mt-1.5 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-700 focus:ring-4 focus:ring-emerald-700/10"
-              />
-            </label>
-            {authError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{authError}</div>}
-            <button disabled={authBusy} type="submit" className="min-h-12 w-full rounded-lg bg-[#10251f] px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-900 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60">
-              {authBusy ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-          <p className="mt-6 text-center text-xs text-slate-400">Need access? Contact your workspace administrator.</p>
+          <footer className="hidden justify-between border-t border-slate-200/80 py-4 text-[11px] text-slate-400 sm:flex">
+            <span>Rigtech Engineering</span>
+            <span>Operations workspace</span>
+          </footer>
         </section>
       </main>
     );
@@ -2570,7 +2846,7 @@ export default function Home() {
 
   if (needsOrganization) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f4f7f5] px-4 py-8">
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 py-8">
         <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700"><Sparkles className="h-6 w-6" /></div>
           <div className="mt-6 text-[10px] uppercase tracking-[0.2em] text-emerald-700">Workspace setup</div>
@@ -2592,7 +2868,7 @@ export default function Home() {
   const userName = String(user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Workspace member");
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-[#f4f7f5] pb-24 text-slate-900 lg:pb-0">
+    <div className="min-h-screen overflow-x-clip bg-background pb-24 text-slate-900 lg:pb-0">
       <div className="flex w-full">
         <aside className={`sticky top-0 hidden h-dvh shrink-0 self-start flex-col border-r border-slate-200 bg-white px-3 py-4 transition-[width] duration-200 lg:flex ${sidebarCollapsed ? "w-20" : "w-72 px-4"}`}>
           <div className={`mb-4 flex items-center ${sidebarCollapsed ? "flex-col gap-3" : "flex-col gap-1"}`}>
@@ -2646,18 +2922,14 @@ export default function Home() {
                 <button type="button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 lg:hidden">
                   <Menu className="h-4 w-4" />
                 </button>
-                <div className="max-w-[8rem] truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 sm:max-w-none sm:tracking-[0.2em]">RIGTECH ENGINEERING</div>
-                <ChevronRight className="hidden h-4 w-4 text-slate-400 sm:block" />
-                <div className="hidden max-w-[7rem] truncate text-sm font-semibold text-slate-700 sm:block">{pageTitle}</div>
+                <div className="min-w-0 lg:hidden">
+                  <div className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Rigtech Operations</div>
+                  <div className="truncate text-base font-bold leading-5 text-slate-900">{pageTitle}</div>
+                </div>
+                <div className="hidden max-w-[8rem] truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 lg:block">RIGTECH ENGINEERING</div>
+                <ChevronRight className="hidden h-4 w-4 text-slate-400 lg:block" />
+                <div className="hidden max-w-[12rem] truncate text-sm font-semibold text-slate-700 lg:block">{pageTitle}</div>
               </div>
-              <button
-                type="button"
-                onClick={() => void supabase.auth.signOut()}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 lg:hidden"
-              >
-                <LogOut className="h-4 w-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </button>
 
               <div className="flex shrink-0 items-center gap-2 sm:gap-3">
                 <label className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-500 sm:flex">
@@ -2669,7 +2941,7 @@ export default function Home() {
                     placeholder="Search tasks, people..."
                   />
                 </label>
-                {canViewModule("notes") && <button
+                {canView("notes") && <button
                   type="button"
                   onClick={() => handleViewChange("notes")}
                   aria-label="Open sticky notes"
@@ -2678,7 +2950,7 @@ export default function Home() {
                 >
                   <StickyNote className="h-4 w-4" />
                 </button>}
-                {canViewModule("notifications") && <button type="button" onClick={() => handleViewChange("notifications")} aria-label="Open notifications" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700">
+                {canView("notifications") && <button type="button" onClick={() => handleViewChange("notifications")} aria-label="Open notifications" className="relative flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700">
                   <Bell className="h-4 w-4" />
                   {notifications.some((notification) => !notification.isRead) && <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white" />}
                 </button>}
@@ -2686,15 +2958,12 @@ export default function Home() {
             </div>
           </header>
 
-          <div className="px-4 py-5 sm:px-6 lg:px-10 lg:pb-28">
-            {syncMessage && (
-              <div className="mb-4 flex items-center justify-between rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                <span>{syncMessage}</span>
-                <button type="button" onClick={() => setSyncMessage("")} className="rounded-full p-1 hover:bg-emerald-100" aria-label="Dismiss sync message">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+          <div className="px-4 py-5 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-10 lg:pb-28">
+          {syncMessage && (
+            <div role="status" aria-live="polite" className="fixed left-4 right-4 top-[calc(env(safe-area-inset-top)+5rem)] z-[70] mx-auto max-w-lg rounded-2xl border border-emerald-200 bg-white/95 px-4 py-3 text-sm text-emerald-900 shadow-lg backdrop-blur sm:left-auto sm:right-6 sm:top-5">
+              <span>{syncMessage}</span>
+            </div>
+          )}
             {offlineMode && (
               <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
                 Offline mode: only tasks loaded during this session remain available. Changes will sync when you reconnect.
@@ -2702,6 +2971,93 @@ export default function Home() {
             )}
             {view === "dashboard" && (
               <>
+                <section className="space-y-5 md:hidden" aria-labelledby="mobile-task-overview-title">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-800">
+                        {currentDate ? new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" }).format(currentDate) : "Your workspace"}
+                      </div>
+                      <h1 id="mobile-task-overview-title" className="mt-1 text-3xl font-black tracking-[-0.06em] text-slate-950">Your work</h1>
+                      <p className="mt-1 text-sm text-slate-600">A quick look at the team’s tasks.</p>
+                    </div>
+                    {canManageModule("tasks") && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCreate(true)}
+                        aria-label="Create a task"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-700 text-white shadow-lg shadow-emerald-900/15 transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+                      >
+                        <Plus className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex min-h-28 w-full items-center justify-between rounded-3xl bg-slate-950 px-5 py-4 text-white shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
+                    <span>
+                      <span className="block text-sm font-medium text-slate-300">Active workload</span>
+                      <span className="mt-1 block text-4xl font-black tracking-tight">{tasks.filter((task) => task.status !== "Completed").length}</span>
+                      <span className="mt-1 block text-xs text-slate-300">Tasks still in progress</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatusFilter("all");
+                        setPriorityFilter("all");
+                        setSearchTerm("");
+                        handleViewChange("my-tasks");
+                      }}
+                      className="flex min-h-11 items-center gap-2 rounded-xl bg-white/10 px-3 text-sm font-semibold text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                    >
+                      View tasks <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3" aria-label="Task priorities and deadlines">
+                    {[
+                      { label: "Due today", value: dueTodayTasks.length, tone: "border-amber-200 bg-amber-50 text-amber-950" },
+                      { label: "Overdue", value: overdueTasks.length, tone: overdueTasks.length ? "border-rose-200 bg-rose-50 text-rose-950" : "border-slate-200 bg-white text-slate-950" },
+                      { label: "Urgent", value: executiveMetrics.urgent, tone: executiveMetrics.urgent ? "border-rose-200 bg-white text-rose-950" : "border-slate-200 bg-white text-slate-950" },
+                      { label: "In progress", value: executiveMetrics.inProgress, tone: "border-sky-200 bg-sky-50 text-sky-950" },
+                    ].map((metric) => (
+                      <div key={metric.label} className={`min-h-20 rounded-2xl border p-3.5 ${metric.tone}`}>
+                        <div className="text-xs font-semibold opacity-80">{metric.label}</div>
+                        <div className="mt-1 text-2xl font-black tracking-tight">{metric.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <section aria-labelledby="mobile-up-next-title">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <h2 id="mobile-up-next-title" className="text-lg font-bold text-slate-950">Needs attention</h2>
+                        <p className="text-xs text-slate-600">Urgent and nearest-due work first</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatusFilter("all");
+                          setPriorityFilter("all");
+                          setSearchTerm("");
+                          handleViewChange("my-tasks");
+                        }}
+                        className="min-h-11 rounded-xl px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
+                      >
+                        All tasks
+                      </button>
+                    </div>
+                    <MobileTaskTracker
+                      tasks={mobileDashboardTasks}
+                      onOpen={openTask}
+                      onStatusChange={(task, status) => void handleTaskStatusChange(task, status)}
+                      onToggleComplete={(task) => void handleTaskStatusChange(task, task.status === "Completed" ? "To do" : "Completed")}
+                      canEdit={canManageModule("tasks")}
+                      emptyTitle={tasks.length ? "You're all caught up" : "No tasks yet"}
+                      emptyDescription={tasks.length ? "There are no open tasks needing attention." : "New tasks will appear here as work is assigned."}
+                    />
+                  </section>
+                </section>
+
+                <div className="hidden md:block">
                 <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{currentDate ? new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(currentDate) : ""}</div>
@@ -2807,6 +3163,7 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
+                </div>
               </>
             )}
 
@@ -2824,8 +3181,15 @@ export default function Home() {
             )}
 
             {view === "executive" && canViewModule("executive") && (
-              <section>
-                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <section className="space-y-4 pb-2 md:space-y-0">
+                <div className="mb-5 flex items-center justify-between gap-3 md:hidden">
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Leadership</div>
+                    <h1 className="mt-1 text-2xl font-black tracking-[-0.05em] text-slate-950">Executive overview</h1>
+                  </div>
+                  <div className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-800"><span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />Live</div>
+                </div>
+                <div className="mb-6 hidden flex-col gap-3 md:flex md:flex-row md:items-end md:justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-700">Leadership workspace</div>
                     <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900 sm:text-4xl">Executive overview</h1>
@@ -2834,13 +3198,85 @@ export default function Home() {
                   <div className="inline-flex w-fit items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800"><TrendingUp className="h-4 w-4" /> Live workspace metrics</div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-3xl bg-emerald-500 p-5 text-white shadow-sm md:hidden">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-bold uppercase tracking-[0.14em] text-white/80">Delivery completion</div>
+                      <div className="mt-2 flex items-baseline gap-1"><span className="text-5xl font-black tracking-[-0.07em]">{executiveMetrics.completionRate}</span><span className="text-2xl font-bold">%</span></div>
+                      <p className="mt-1 text-sm text-white/85">{executiveMetrics.completed} of {executiveMetrics.total} tasks completed</p>
+                    </div>
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/20"><Gauge className="h-6 w-6" /></div>
+                  </div>
+                  <div className="mt-5 h-2 overflow-hidden rounded-full bg-black/15"><div className="h-full rounded-full bg-slate-950" style={{ width: `${executiveMetrics.completionRate}%` }} /></div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5 md:hidden">
                   {[
-                    { label: "Completion rate", value: `${executiveMetrics.completionRate}%`, note: `${executiveMetrics.completed} completed of ${executiveMetrics.total}`, tone: "bg-slate-950 text-white" },
-                    { label: "Active workload", value: String(executiveMetrics.active), note: `${executiveMetrics.inProgress} currently in progress`, tone: "bg-white text-slate-900" },
-                    { label: "At-risk tasks", value: String(overdueTasks.length + executiveMetrics.urgent), note: `${overdueTasks.length} overdue · ${executiveMetrics.urgent} urgent`, tone: "bg-amber-50 text-amber-950" },
-                    { label: "Team members", value: String(members.length), note: `${projects.length} active projects`, tone: "bg-white text-slate-900" },
-                  ].map((metric) => (
+                    { label: "Active", value: executiveMetrics.active, icon: Layers3, style: "text-slate-950" },
+                    { label: "At risk", value: executiveRiskTasks.length, icon: TriangleAlert, style: "text-amber-800" },
+                    { label: "People", value: members.length, icon: Users, style: "text-slate-950" },
+                  ].map(({ label, value, icon: Icon, style }) => (
+                    <div key={label} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 ${style}`}><Icon className="h-3.5 w-3.5" />{label}</div>
+                      <div className="mt-2 text-2xl font-black tracking-tight text-slate-950">{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:hidden">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div><h2 className="text-base font-bold text-slate-950">Delivery health</h2><p className="mt-0.5 text-xs text-slate-500">Task status at a glance</p></div>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">{executiveMetrics.total} total</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+                    {(["In progress", "To do", "Waiting", "Completed"] as TaskStatus[]).map((status) => {
+                      const count = tasks.filter((task) => task.status === status).length;
+                      const percentage = executiveMetrics.total ? Math.round((count / executiveMetrics.total) * 100) : 0;
+                      const barTone = status === "Completed" ? "bg-emerald-600" : status === "In progress" ? "bg-sky-500" : status === "Waiting" ? "bg-violet-500" : "bg-slate-400";
+                      return (
+                        <div key={status} className="min-w-0">
+                          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs"><span className="truncate font-semibold text-slate-700">{status}</span><span className="shrink-0 font-bold text-slate-950">{count}</span></div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${barTone}`} style={{ width: `${percentage}%` }} /></div>
+                          <div className="mt-1 text-[10px] text-slate-400">{percentage}% of tasks</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:hidden">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div><h2 className="text-base font-bold text-slate-950">Needs attention</h2><p className="mt-0.5 text-xs text-slate-500">Urgent and overdue work</p></div>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${executiveRiskTasks.length ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>{executiveRiskTasks.length ? `${executiveRiskTasks.length} items` : "All clear"}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {executiveRiskTasks.slice(0, 4).map((task) => (
+                      <button key={task.supabaseId} type="button" onClick={() => openTask(task)} className="flex min-h-14 w-full items-center gap-3 py-2.5 text-left">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${formatTaskDueDate(task.due).overdue ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-800"}`}><TriangleAlert className="h-4 w-4" /></span>
+                        <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-800">{task.title}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{formatTaskDueDate(task.due).overdue ? "Overdue" : "Urgent"} · {task.assignee}</span></span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
+                    ))}
+                    {!executiveRiskTasks.length && <div className="py-5 text-center text-sm text-slate-500">No urgent or overdue tasks right now.</div>}
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm md:hidden">
+                  <div className="mb-3"><h2 className="text-base font-bold text-slate-950">Team workload</h2><p className="mt-0.5 text-xs text-slate-500">Active assignments by person</p></div>
+                  <div className="divide-y divide-slate-100">
+                    {teamWorkload.slice(0, 5).map((member) => (
+                      <div key={member.id} className="flex items-center gap-3 py-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-900">{member.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</div>
+                        <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-slate-800">{member.name}</div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${member.activeTasks >= 5 ? "bg-rose-500" : member.activeTasks >= 3 ? "bg-amber-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, member.activeTasks * 20)}%` }} /></div></div>
+                        <div className="shrink-0 text-xs font-bold text-slate-600">{member.activeTasks} active</div>
+                      </div>
+                    ))}
+                    {!teamWorkload.length && <div className="py-5 text-center text-sm text-slate-500">Team workload will appear after members are added.</div>}
+                  </div>
+                </div>
+
+                <div className="hidden gap-4 sm:grid-cols-2 xl:grid-cols-4 md:grid">
+                  {executiveMetricCards.map((metric) => (
                     <div key={metric.label} className={`rounded-2xl border border-slate-200 p-5 ${metric.tone}`}>
                       <div className="text-xs font-semibold opacity-75">{metric.label}</div>
                       <div className="mt-4 text-4xl font-black tracking-[-0.06em]">{metric.value}</div>
@@ -2849,7 +3285,7 @@ export default function Home() {
                   ))}
                 </div>
 
-                <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+                <div className="mt-6 hidden gap-6 xl:grid-cols-[1.2fr_0.8fr] md:grid">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
                     <div className="mb-5 flex items-center justify-between">
                       <div><h2 className="text-lg font-bold text-slate-900">Delivery health</h2><p className="text-sm text-slate-500">Current task distribution across the organization.</p></div>
@@ -2873,7 +3309,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+                <div className="mt-6 hidden rounded-3xl border border-slate-200 bg-white p-4 sm:p-5 md:block">
                   <div className="mb-5"><h2 className="text-lg font-bold text-slate-900">Team workload</h2><p className="text-sm text-slate-500">Active assignments by team member.</p></div>
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {teamWorkload.slice(0, 8).map((member) => <div key={member.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-black text-emerald-800">{member.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</div><div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-800">{member.name}</div><div className="text-xs text-slate-500">{member.activeTasks} active tasks</div></div></div><div className="mt-4 h-2 rounded-full bg-slate-200"><div className={`h-2 rounded-full ${member.activeTasks >= 5 ? "bg-rose-500" : member.activeTasks >= 3 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, member.activeTasks * 20)}%` }} /></div></div>)}
@@ -2887,13 +3323,14 @@ export default function Home() {
               <div>
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Work queue</div>
-                    <h1 className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900 sm:text-3xl">{view === "my-tasks" ? "My tasks" : "All tasks"}</h1>
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-800">Work queue</div>
+                    <h1 className="mt-1 text-3xl font-black tracking-[-0.06em] text-slate-950 sm:text-3xl">{view === "my-tasks" ? "My tasks" : "All tasks"}</h1>
+                    <p className="mt-1 text-sm text-slate-600">{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"} match your view</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="hidden rounded-xl border border-slate-200 bg-white p-1 sm:inline-flex">
-                      <button type="button" onClick={() => setTaskLayout("list")} className={`rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "list" ? "bg-slate-950 text-white" : "text-slate-600"}`}>List</button>
-                      <button type="button" onClick={() => setTaskLayout("kanban")} className={`inline-flex items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "kanban" ? "bg-slate-950 text-white" : "text-slate-600"}`}><KanbanSquare className="h-3.5 w-3.5" /> Kanban</button>
+                      <button type="button" onClick={() => setTaskLayout("list")} aria-pressed={taskLayout === "list"} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "list" ? "bg-slate-950 text-white" : "text-slate-600"}`}>List</button>
+                      <button type="button" onClick={() => setTaskLayout("kanban")} aria-pressed={taskLayout === "kanban"} className={`inline-flex min-h-11 items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold ${taskLayout === "kanban" ? "bg-slate-950 text-white" : "text-slate-600"}`}><KanbanSquare className="h-3.5 w-3.5" /> Kanban</button>
                     </div>
                     {canManageModule("tasks") && <button type="button" onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 self-start rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_20px_rgba(16,185,129,0.16)]">
                       <Plus className="h-4 w-4" /> New task
@@ -2902,12 +3339,12 @@ export default function Home() {
                 </div>
 
                 <div className="mb-3 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-                  <div className="flex min-w-max gap-2 pb-1">
+                  <div className="flex min-w-max gap-2 pb-1" role="group" aria-label="Filter tasks by status">
                     {[{ label: "All tasks", value: "all" }, ...(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((status) => ({ label: status, value: status }))].map((filter) => {
                       const count = filter.value === "all" ? tasks.length : tasks.filter((task) => task.status === filter.value).length;
                       const selected = statusFilter === filter.value;
                       return (
-                        <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} aria-pressed={selected} className={`rounded-xl border px-3 py-2 text-xs font-semibold transition ${selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-300"}`}>
+                        <button key={filter.value} type="button" onClick={() => setStatusFilter(filter.value)} aria-pressed={selected} className={`min-h-11 rounded-xl border px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${selected ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}>
                           {filter.label}<span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${selected ? "bg-white/15 text-white" : "bg-slate-100 text-slate-500"}`}>{count}</span>
                         </button>
                       );
@@ -2916,24 +3353,26 @@ export default function Home() {
                 </div>
 
                 <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 sm:p-3 md:flex md:items-center">
-                  <label className="col-span-2 flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-500 md:flex-1">
+                  <label className="col-span-2 flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-500 md:flex-1">
                     <Search className="h-4 w-4" />
                     <input
+                      type="search"
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="w-full border-0 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                      aria-label="Search tasks, clients or teams"
+                      className="w-full border-0 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-500 md:text-sm"
                       placeholder="Filter tasks, clients or teams..."
                     />
                   </label>
-                  <div className="flex items-center px-1 text-xs text-slate-500 md:hidden">{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"} shown</div>
-                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status" className="hidden rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none md:block">
+                  <div className="flex min-h-11 items-center px-1 text-xs text-slate-600 md:hidden" aria-live="polite">{filteredTasks.length} {filteredTasks.length === 1 ? "task" : "tasks"} shown</div>
+                  <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by status" className="hidden min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none md:block">
                     <option value="all">All statuses</option>
                     <option value="To do">To do</option>
                     <option value="In progress">In progress</option>
                     <option value="Waiting">Waiting</option>
                     <option value="Completed">Completed</option>
                   </select>
-                  <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} aria-label="Filter by priority" className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2.5 text-sm text-slate-700 outline-none md:px-3">
+                  <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} aria-label="Filter by priority" className="min-h-11 min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:px-3">
                     <option value="all">All priorities</option>
                     <option value="Urgent">Urgent</option>
                     <option value="High">High</option>
@@ -3047,12 +3486,12 @@ export default function Home() {
               <div>
                 <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Workspace directory</div>
-                    <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">{pageTitle}</h1>
-                    <p className="mt-2 text-sm text-slate-500">Manage the people and structure connected to this organization.</p>
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{currentRole === "client" ? "Client portal" : view === "projects" ? "Project workspace" : "Workspace directory"}</div>
+                    <h1 className="mt-1 text-3xl font-black tracking-[-0.06em] text-slate-950">{pageTitle}</h1>
+                        <p className="mt-1 text-sm text-slate-600">{view === "projects" ? currentRole === "client" ? "Projects shared with your organization. Open a project to view its progress and milestones." : `${projects.length} ${projects.length === 1 ? "project" : "projects"} · open a project for tasks and milestones.` : "Manage the people and structure connected to this organization."}</p>
                   </div>
-                  {canManageModule(view) && <form onSubmit={handleManagementSubmit} className="flex w-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:w-auto md:flex-row md:items-center">
-                    <input value={managementName} onChange={(event) => setManagementName(event.target.value)} required placeholder={view === "team" ? "Employee name" : view === "clients" ? "Client name" : view === "projects" ? "Project name" : "Department name"} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
+                  {canManageModule(view) && <form onSubmit={handleManagementSubmit} className="hidden w-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:flex md:w-auto md:flex-row md:items-center">
+                    <input value={managementName} onChange={(event) => setManagementName(event.target.value)} required aria-label={view === "projects" ? "Project name" : view === "team" ? "Employee name" : view === "clients" ? "Client name" : "Department name"} placeholder={view === "team" ? "Employee name" : view === "clients" ? "Client name" : view === "projects" ? "Project name" : "Department name"} className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm" />
                     {view === "team" && (
                       <>
                         <input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" placeholder="Member email" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
@@ -3068,7 +3507,7 @@ export default function Home() {
                           {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                         </select>}
                         <fieldset className="min-w-48 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                          <legend className="px-1 text-xs font-semibold text-slate-600">Departments</legend>
+                          <legend className="px-1 text-xs font-semibold text-slate-600">Departments · select any</legend>
                           <div className="max-h-28 space-y-1 overflow-y-auto">
                             {departments.length ? departments.map((department) => (
                               <label key={department.id} className="flex cursor-pointer items-center gap-2 py-1 text-xs text-slate-700">
@@ -3092,86 +3531,253 @@ export default function Home() {
                     )}
                     {view === "projects" && (
                       <>
-                        <select value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none">
+                        <select aria-label="Project client" value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm">
                           <option value="">No client</option>
                           {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
                         </select>
-                        <input type="date" value={projectStartDate} onChange={(event) => setProjectStartDate(event.target.value)} aria-label="Project start date" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
-                        <input type="date" value={projectTargetDate} onChange={(event) => setProjectTargetDate(event.target.value)} aria-label="Project target date" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
+                        <input type="date" value={projectStartDate} onChange={(event) => setProjectStartDate(event.target.value)} aria-label="Project start date" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm" />
+                        <input type="date" value={projectTargetDate} onChange={(event) => setProjectTargetDate(event.target.value)} aria-label="Project target date" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm" />
                       </>
                     )}
-                    <button disabled={managementBusy} type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"><Plus className="h-4 w-4" /> Add</button>
+                    <button disabled={managementBusy} type="submit" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 md:min-h-0"><Plus className="h-4 w-4" /> Add</button>
                   </form>}
+                  {(view === "projects" || view === "team" || view === "clients" || view === "departments") && canManageModule(view) && (
+                    <button type="button" onClick={() => view === "projects" ? setShowMobileProjectForm((current) => !current) : setShowMobileDirectoryForm((current) => !current)} aria-expanded={view === "projects" ? showMobileProjectForm : showMobileDirectoryForm} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 md:hidden">
+                      <Plus className="h-4 w-4" /> {view === "projects" ? (showMobileProjectForm ? "Close project form" : "New project") : (showMobileDirectoryForm ? "Close form" : view === "team" ? "Add employee" : view === "clients" ? "Add client" : "Add department")}
+                    </button>
+                  )}
                 </div>
+
+                {view === "projects" && showMobileProjectForm && canManageModule("projects") && (
+                  <form onSubmit={handleManagementSubmit} className="mb-4 grid gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:hidden">
+                    <input value={managementName} onChange={(event) => setManagementName(event.target.value)} required aria-label="Project name" placeholder="Project name" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                    <select aria-label="Project client" value={managementDepartmentId} onChange={(event) => setManagementDepartmentId(event.target.value)} className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                      <option value="">No client</option>
+                      {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                    </select>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-xs font-semibold text-slate-700">Start date<input type="date" value={projectStartDate} onChange={(event) => setProjectStartDate(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                      <label className="text-xs font-semibold text-slate-700">Target date<input type="date" value={projectTargetDate} onChange={(event) => setProjectTargetDate(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                    </div>
+                    <button disabled={managementBusy} type="submit" className="min-h-12 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{managementBusy ? "Adding…" : "Add project"}</button>
+                  </form>
+                )}
+
+                {(view === "team" || view === "clients" || view === "departments") && showMobileDirectoryForm && canManageModule(view) && (
+                  <form onSubmit={handleManagementSubmit} className="mb-4 grid gap-2 rounded-2xl border border-slate-200 bg-white p-3 md:hidden">
+                    <label className="text-xs font-semibold text-slate-600">
+                      {view === "team" ? "Employee name" : view === "clients" ? "Client or company name" : "Department name"}
+                      <input value={managementName} onChange={(event) => setManagementName(event.target.value)} required aria-label={view === "team" ? "Employee name" : view === "clients" ? "Client name" : "Department name"} placeholder={view === "team" ? "Full name" : view === "clients" ? "Company or client name" : "Department name"} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                    </label>
+                    {view === "team" && (
+                      <>
+                        <label className="text-xs font-semibold text-slate-600">Login email<input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" autoComplete="email" placeholder="name@example.com" className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                        <label className="text-xs font-semibold text-slate-600">Temporary password<input value={managementPassword} onChange={(event) => setManagementPassword(event.target.value)} required minLength={8} type="password" autoComplete="new-password" placeholder="At least 8 characters" className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                        <label className="text-xs font-semibold text-slate-600">Built-in role
+                          <select value={managementRole} onChange={(event) => setManagementRole(event.target.value as WorkspaceMember["role"])} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                            <option value="employee">Employee</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option><option value="admin">Admin</option>
+                          </select>
+                        </label>
+                        {canAssignCustomRoles && <label className="text-xs font-semibold text-slate-600">Access profile
+                          <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                            <option value="">Built-in permissions</option>{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                          </select>
+                        </label>}
+                        <fieldset className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <legend className="px-1 text-xs font-semibold text-slate-600">Departments · select any</legend>
+                          <div className="max-h-36 space-y-1 overflow-y-auto">
+                            {departments.length ? departments.map((department) => (
+                              <label key={department.id} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-700">
+                                <input type="checkbox" checked={managementDepartmentIds.includes(department.id)} onChange={() => toggleManagementDepartment(department.id)} className="h-4 w-4 accent-emerald-700" />
+                                {department.name}
+                              </label>
+                            )) : <span className="text-sm text-slate-500">Add a department first.</span>}
+                          </div>
+                        </fieldset>
+                      </>
+                    )}
+                    {view === "clients" && (
+                      <>
+                        <label className="text-xs font-semibold text-slate-600">Portal login email<input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" autoComplete="email" placeholder="client@example.com" className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                        <label className="text-xs font-semibold text-slate-600">Temporary password<input value={managementPassword} onChange={(event) => setManagementPassword(event.target.value)} required minLength={8} type="password" autoComplete="new-password" placeholder="At least 8 characters" className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                        {canAssignCustomRoles && <label className="text-xs font-semibold text-slate-600">Portal access profile
+                          <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                            <option value="">Client defaults</option>{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                          </select>
+                        </label>}
+                      </>
+                    )}
+                    <button disabled={managementBusy} type="submit" className="min-h-12 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{managementBusy ? "Saving…" : view === "team" ? "Create employee login" : view === "clients" ? "Create client portal" : "Add department"}</button>
+                  </form>
+                )}
+
+                {(view === "team" || view === "clients" || view === "departments") && (
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+                    <label className="relative block min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input type="search" value={directorySearch} onChange={(event) => setDirectorySearch(event.target.value)} placeholder={view === "team" ? "Search employees, emails, departments" : view === "clients" ? "Search clients, portal emails, projects" : "Search departments"} aria-label={view === "team" ? "Search employees" : view === "clients" ? "Search clients" : "Search departments"} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                    </label>
+                    {view === "team" && (
+                      <>
+                        <select value={employeeRoleFilter} onChange={(event) => setEmployeeRoleFilter(event.target.value)} aria-label="Filter employees by role" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                          <option value="all">All roles</option><option value="employee">Employees</option><option value="supervisor">Supervisors</option><option value="manager">Managers</option><option value="admin">Admins</option>
+                        </select>
+                        <select value={employeeDepartmentFilter} onChange={(event) => setEmployeeDepartmentFilter(event.target.value)} aria-label="Filter employees by department" className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                          <option value="all">All departments</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                        </select>
+                      </>
+                    )}
+                    <div className="flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600">
+                      {view === "team" ? `${filteredDirectoryMembers.length} of ${members.length} employees` : view === "clients" ? `${filteredDirectoryClients.length} of ${clients.length} clients` : `${filteredDirectoryDepartments.length} of ${departments.length} departments`}
+                    </div>
+                  </div>
+                )}
 
                 {view === "departments" && (
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {departments.length ? departments.map((department) => (
-                      <div key={department.id} className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div>
-                          <div className="min-w-0 flex-1"><h3 className="truncate font-bold text-slate-800">{department.name}</h3><p className="text-xs text-slate-500">{members.filter((member) => member.departmentIds.includes(department.id)).length} employees</p></div>
-                          {canManageModule("departments") && <button type="button" disabled={managementBusy} onClick={() => void handleDeleteDepartment(department)} aria-label={`Delete ${department.name} department`} title="Delete department" className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>}
-                        </div>
-                      </div>
-                    )) : <EmptyDirectory label="departments" />}
+                    {filteredDirectoryDepartments.length ? filteredDirectoryDepartments.map((department) => {
+                      const departmentMembers = members.filter((member) => member.departmentIds.includes(department.id));
+                      return (
+                        <article key={department.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-700"><FolderKanban className="h-5 w-5" /></div>
+                            <div className="min-w-0 flex-1"><h2 className="break-words font-bold text-slate-900">{department.name}</h2><p className="mt-0.5 text-xs text-slate-500">{departmentMembers.length} {departmentMembers.length === 1 ? "employee" : "employees"}</p></div>
+                            {canManageModule("departments") && <button type="button" disabled={managementBusy} onClick={() => void handleDeleteDepartment(department)} aria-label={`Delete ${department.name} department`} title="Delete department" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>}
+                          </div>
+                          {departmentMembers.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{departmentMembers.slice(0, 4).map((member) => <span key={member.id} className="max-w-full truncate rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{member.name}</span>)}{departmentMembers.length > 4 && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">+{departmentMembers.length - 4}</span>}</div>}
+                        </article>
+                      );
+                    }) : directorySearch ? <EmptyDirectory label="matching departments" /> : <EmptyDirectory label="departments" />}
                   </div>
                 )}
 
                 {view === "team" && (
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                    {members.length ? (
-                      <div className="overflow-x-auto">
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    {filteredDirectoryMembers.length ? (
+                      <>
+                      <div className="divide-y divide-slate-100 md:hidden">
+                        {filteredDirectoryMembers.map((member) => {
+                          const departmentNames = member.departmentIds
+                            .map((departmentId) => departments.find((department) => department.id === departmentId)?.name)
+                            .filter((name): name is string => Boolean(name));
+                          const customRoleName = workspaceRoles.find((role) => role.id === member.customRoleId)?.name;
+                          return (
+                            <article key={member.id} className="p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-800">{member.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</div>
+                                <div className="min-w-0 flex-1">
+                                  <h2 className="break-words text-sm font-bold text-slate-900">{member.name}</h2>
+                                  <p className="mt-0.5 break-all text-xs text-slate-500">{member.email}</p>
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-800">{memberRoleLabels[member.role]}</span>
+                                    {customRoleName && <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-800">{customRoleName}</span>}
+                                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${member.availabilityStatus === "available" ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`}>{member.availabilityStatus === "leave" ? "On leave" : member.availabilityStatus}</span>
+                                  </div>
+                                  <p className="mt-2 text-xs text-slate-500">{departmentNames.length ? departmentNames.join(" · ") : "No department"}</p>
+                                </div>
+                                <button type="button" onClick={() => handleEditMember(member)} aria-label={`Edit ${member.name}`} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-4 w-4" /></button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                      <div className="hidden overflow-x-auto md:block">
                         <table className="min-w-[720px] w-full text-left">
                           <thead className="border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.16em] text-slate-500">
-                            <tr><th className="px-5 py-3 font-bold">Employee</th><th className="px-5 py-3 font-bold">Email</th><th className="px-5 py-3 font-bold">Role</th><th className="px-5 py-3 font-bold">Department</th><th className="px-5 py-3 text-right font-bold">Action</th></tr>
+                            <tr><th className="px-5 py-3 font-bold">Employee</th><th className="px-5 py-3 font-bold">Email</th><th className="px-5 py-3 font-bold">Role / access profile</th><th className="px-5 py-3 font-bold">Department</th><th className="px-5 py-3 font-bold">Availability</th><th className="px-5 py-3 text-right font-bold">Action</th></tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {members.map((member) => (
+                            {filteredDirectoryMembers.map((member) => (
                               <tr key={member.id} className="text-sm text-slate-700">
                                 <td className="px-5 py-4 font-semibold text-slate-900">{member.name}</td>
-                                <td className="px-5 py-4">{member.email}</td>
-                                <td className="px-5 py-4"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">{memberRoleLabels[member.role]}</span></td>
+                                <td className="px-5 py-4 break-all">{member.email}</td>
+                                <td className="px-5 py-4"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">{memberRoleLabels[member.role]}</span>{workspaceRoles.find((role) => role.id === member.customRoleId) && <div className="mt-1 text-xs text-slate-500">{workspaceRoles.find((role) => role.id === member.customRoleId)?.name}</div>}</td>
                                 <td className="px-5 py-4">{member.departmentIds.length ? member.departmentIds.map((departmentId) => departments.find((department) => department.id === departmentId)?.name).filter((name): name is string => Boolean(name)).join(", ") : "No department"}</td>
+                                <td className="px-5 py-4 capitalize">{member.availabilityStatus.replace("_", " ")}</td>
                                 <td className="px-5 py-4 text-right"><button type="button" onClick={() => handleEditMember(member)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700"><Pencil className="h-3.5 w-3.5" /> Edit</button></td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                    ) : <EmptyDirectory label="employees" />}
+                      </>
+                    ) : members.length ? <div className="p-8 text-center text-sm text-slate-500">No employees match these search or filter settings.</div> : <EmptyDirectory label="employees" />}
                   </div>
                 )}
 
                 {view === "clients" && (
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {clients.length ? clients.map((client) => (
-                      <div key={client.id} className="rounded-2xl border border-slate-200 bg-white p-5">
-                        <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><BriefcaseBusiness className="h-5 w-5" /></div><div className="min-w-0"><h3 className="truncate font-bold text-slate-800">{client.name}</h3><p className="truncate text-xs text-slate-500">{client.contactEmail ?? "Client portal login"}</p></div></div>
-                        {client.userId && canAssignCustomRoles && (
-                          <label className="mt-4 block text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                            Portal role
-                            <select value={client.customRoleId ?? ""} onChange={(event) => { if (client.userId) void handleAssignCustomRole(client.userId, event.target.value); }} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-700">
-                              <option value="">Client defaults</option>
-                              {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
-                            </select>
-                          </label>
-                        )}
-                      </div>
-                    )) : <EmptyDirectory label="clients" />}
+                    {filteredDirectoryClients.length ? filteredDirectoryClients.map((client) => {
+                      const projectCount = projects.filter((project) => project.clientId === client.id).length;
+                      const portalRole = workspaceRoles.find((role) => role.id === client.customRoleId);
+                      return (
+                        <article key={client.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><BriefcaseBusiness className="h-5 w-5" /></div>
+                            <div className="min-w-0 flex-1">
+                              <h2 className="break-words font-bold text-slate-900">{client.name}</h2>
+                              <p className="mt-1 break-all text-xs text-slate-500">{client.contactEmail || "No portal email"}</p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${client.userId ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>{client.userId ? "Portal active" : "No portal login"}</span>
+                          </div>
+                          <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                            <span className="text-xs text-slate-500">{projectCount} {projectCount === 1 ? "project" : "projects"}</span>
+                            {client.userId && <span className="text-xs font-medium text-slate-600">{portalRole?.name ?? "Client default access"}</span>}
+                          </div>
+                          {client.userId && canAssignCustomRoles && (
+                            <label className="mt-3 block text-xs font-semibold text-slate-600">
+                              Portal access profile
+                              <select value={client.customRoleId ?? ""} onChange={(event) => { if (client.userId) void handleAssignCustomRole(client.userId, event.target.value); }} className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-700">
+                                <option value="">Client defaults</option>
+                                {workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
+                              </select>
+                            </label>
+                          )}
+                        </article>
+                      );
+                    }) : clients.length ? <div className="col-span-full rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No clients match your search.</div> : <EmptyDirectory label="clients" />}
                   </div>
                 )}
 
                 {view === "projects" && (
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {projects.length ? projects.map((project) => (
-                      <button key={project.id} type="button" disabled={projectDetailBusy} onClick={() => void openProjectDetails(project)} className="rounded-2xl border border-slate-200 bg-white p-5 text-left transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-lg disabled:cursor-wait disabled:opacity-60">
-                        <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><BarChart3 className="h-5 w-5" /></div><div><h3 className="font-bold text-slate-800">{project.name}</h3><p className="text-xs text-slate-500">{clients.find((client) => client.id === project.clientId)?.name ?? "Internal project"}</p></div></div>
-                        <div className="mt-3 text-xs text-slate-500">{project.description || "No project description yet."}</div>
-                        <div className="mt-4 h-2 rounded-full bg-slate-100"><div className="h-2 rounded-full bg-emerald-600" style={{ width: `${Math.round((tasks.filter((task) => task.project === project.name && task.status === "Completed").length / Math.max(1, tasks.filter((task) => task.project === project.name).length)) * 100)}%` }} /></div>
-                        <div className="mt-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>{tasks.filter((task) => task.project === project.name).length} top-level tasks</span><span>{projectDetailBusy ? "Loading…" : "View details"}</span></div>
-                      </button>
-                    )) : <EmptyDirectory label="projects" />}
+                  <div className="grid gap-3 md:grid-cols-2 md:gap-4 xl:grid-cols-3">
+                    {projects.length ? projects.map((project) => {
+                      const projectTasks = tasks.filter((task) => task.project === project.name);
+                      const completedTasks = projectTasks.filter((task) => task.status === "Completed").length;
+                      const completion = projectTasks.length ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
+                      const clientName = clients.find((client) => client.id === project.clientId)?.name ?? "Internal project";
+                      return (
+                        <button key={project.id} type="button" disabled={projectDetailBusy} onClick={() => void openProjectDetails(project)} aria-label={`Open project ${project.name}`} className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-emerald-300 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60 sm:p-5">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800"><BarChart3 className="h-5 w-5" aria-hidden="true" /></div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <h3 className="line-clamp-2 text-base font-bold leading-5 text-slate-950">{project.name}</h3>
+                                <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-700">{project.status ?? "Active"}</span>
+                              </div>
+                              <p className="mt-1 truncate text-xs text-slate-600">{clientName}</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 flex items-end justify-between gap-3">
+                            <div>
+                              <div className="text-2xl font-black tracking-tight text-slate-950">{projectTasks.length}</div>
+                              <div className="text-xs text-slate-600">tasks · {completedTasks} done</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-bold text-emerald-800">{completion}%</div>
+                              <div className="text-[10px] text-slate-600">complete</div>
+                            </div>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-label={`${project.name} completion`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={completion}>
+                            <div className="h-full rounded-full bg-emerald-600" style={{ width: `${completion}%` }} />
+                          </div>
+                          <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-600">
+                            <span className="truncate">{project.targetDate ? `Target ${project.targetDate}` : "No target date"}</span>
+                            <span className="shrink-0 font-semibold text-emerald-800">{projectDetailBusy ? "Loading…" : "Details →"}</span>
+                          </div>
+                        </button>
+                      );
+                    }) : <EmptyDirectory label="projects" />}
                   </div>
                 )}
               </div>
@@ -3179,20 +3785,27 @@ export default function Home() {
 
             {view === "notifications" && (
               <section>
-                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Workspace updates</div>
                     <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">Notifications</h1>
-                    <p className="mt-2 text-sm text-slate-500">Stay up to date with assignments, comments and task changes.</p>
+                    <p className="mt-2 text-sm text-slate-500">{notifications.filter((notification) => !notification.isRead).length} unread · latest workspace activity</p>
                   </div>
-                  <button type="button" onClick={() => void markAllNotificationsRead()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700">
+                  <button type="button" disabled={!notifications.some((notification) => !notification.isRead)} onClick={() => void markAllNotificationsRead()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                     <Check className="h-4 w-4" /> Mark all read
                   </button>
                 </div>
+                <div role="group" aria-label="Filter notifications" className="mb-4 flex gap-2">
+                  {(["all", "unread"] as const).map((filter) => (
+                    <button key={filter} type="button" onClick={() => setNotificationFilter(filter)} aria-pressed={notificationFilter === filter} className={`min-h-11 rounded-xl px-4 text-sm font-semibold capitalize ${notificationFilter === filter ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-600"}`}>
+                      {filter === "all" ? `All · ${notifications.length}` : `Unread · ${notifications.filter((notification) => !notification.isRead).length}`}
+                    </button>
+                  ))}
+                </div>
                 <div className="space-y-3">
-                  {notifications.length ? notifications.map((notification) => (
-                    <button key={notification.id} type="button" onClick={() => void markNotificationRead(notification)} className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition ${notification.isRead ? "border-slate-200 bg-white" : "border-emerald-200 bg-emerald-50/60"}`}>
-                      <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${notification.isRead ? "bg-slate-100 text-slate-500" : "bg-emerald-100 text-emerald-700"}`}><Bell className="h-4 w-4" /></div>
+                  {filteredNotifications.length ? filteredNotifications.map((notification) => (
+                    <button key={notification.id} type="button" onClick={() => void markNotificationRead(notification)} aria-label={`${notification.isRead ? "Read" : "Mark read"} notification: ${notification.title}`} className={`flex min-h-24 w-full items-start gap-3 rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 ${notification.isRead ? "border-slate-200 bg-white" : "border-emerald-200 bg-emerald-50/60"}`}>
+                      <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${notification.isRead ? "bg-slate-100 text-slate-500" : "bg-emerald-100 text-emerald-700"}`}><Bell className="h-4 w-4" /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="font-semibold text-slate-900">{notification.title}</div>
@@ -3206,8 +3819,8 @@ export default function Home() {
                   )) : (
                     <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
                       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><Bell className="h-6 w-6" /></div>
-                      <h2 className="mt-4 text-lg font-bold text-slate-900">You’re all caught up</h2>
-                      <p className="mt-1 text-sm text-slate-500">New workspace activity will appear here.</p>
+                      <h2 className="mt-4 text-lg font-bold text-slate-900">{notificationFilter === "unread" ? "You’re all caught up" : "No notifications yet"}</h2>
+                      <p className="mt-1 text-sm text-slate-500">{notificationFilter === "unread" ? "There are no unread updates." : "New workspace activity will appear here."}</p>
                     </div>
                   )}
                 </div>
@@ -3216,32 +3829,35 @@ export default function Home() {
 
             {view === "notes" && (
               <section>
-                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.2em] text-amber-600">Personal workspace</div>
                     <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">Sticky notes</h1>
-                    <p className="mt-2 max-w-2xl text-sm text-slate-500">Capture quick ideas, reminders and hand-offs. Add as many notes as you need and share them with your workspace or outside it.</p>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-500">Quick reminders and hand-offs, ready to edit or share.</p>
                   </div>
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">{notes.length} {notes.length === 1 ? "note" : "notes"}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-800">{notes.length} {notes.length === 1 ? "note" : "notes"}</div>
+                    {canManageModule("notes") && <button type="button" onClick={() => setShowNoteComposer((current) => !current)} aria-expanded={showNoteComposer} aria-controls="sticky-note-composer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white md:hidden"><Plus className="h-4 w-4" />{showNoteComposer ? "Close editor" : "New note"}</button>}
+                  </div>
                 </div>
 
-                {canManageModule("notes") && <form id="sticky-note-composer" onSubmit={handleCreateNote} className={`relative mb-5 min-h-60 overflow-hidden rounded-sm border p-5 pt-7 shadow-[0_14px_28px_rgba(15,23,42,0.12)] transition-transform sm:p-6 sm:pt-8 ${noteColor === "yellow" ? "rotate-[-0.6deg] border-amber-200 bg-amber-100" : noteColor === "blue" ? "rotate-[0.5deg] border-sky-200 bg-sky-100" : noteColor === "green" ? "rotate-[-0.4deg] border-emerald-200 bg-emerald-100" : "rotate-[0.6deg] border-pink-200 bg-pink-100"}`}>
+                {canManageModule("notes") && <form id="sticky-note-composer" onSubmit={handleCreateNote} className={`${showNoteComposer ? "block" : "hidden"} relative mb-5 min-h-60 overflow-hidden rounded-sm border p-4 pt-7 shadow-[0_14px_28px_rgba(15,23,42,0.12)] transition-transform md:block sm:p-6 sm:pt-8 ${noteColor === "yellow" ? "rotate-[-0.6deg] border-amber-200 bg-amber-100" : noteColor === "blue" ? "rotate-[0.5deg] border-sky-200 bg-sky-100" : noteColor === "green" ? "rotate-[-0.4deg] border-emerald-200 bg-emerald-100" : "rotate-[0.6deg] border-pink-200 bg-pink-100"}`}>
                   <span aria-hidden="true" className="absolute left-1/2 top-0 h-5 w-24 -translate-x-1/2 -translate-y-1/2 rotate-[-3deg] bg-white/70 shadow-sm" />
-                  <div className="mb-4 flex items-center justify-between gap-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-sm font-bold text-slate-900"><StickyNote className="h-4 w-4 text-amber-600" />{editingNoteId ? "Pick up and edit" : "Pin a new note"}</div>
                     <div className="flex items-center gap-2 rounded-full bg-white/55 px-2.5 py-1.5">
                       {(["yellow", "blue", "green", "pink"] as WorkspaceNote["color"][]).map((color) => (
-                        <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label={`${color} note`} aria-pressed={noteColor === color} className={`h-4 w-4 rounded-full ${color === "yellow" ? "bg-amber-400" : color === "blue" ? "bg-sky-400" : color === "green" ? "bg-emerald-400" : "bg-pink-400"} ${noteColor === color ? "ring-2 ring-slate-800 ring-offset-2 ring-offset-transparent" : ""}`} />
+                        <button key={color} type="button" onClick={() => setNoteColor(color)} aria-label={`${color} note`} aria-pressed={noteColor === color} className="flex h-9 w-9 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-800"><span aria-hidden="true" className={`h-4 w-4 rounded-full ${color === "yellow" ? "bg-amber-400" : color === "blue" ? "bg-sky-400" : color === "green" ? "bg-emerald-400" : "bg-pink-400"} ${noteColor === color ? "ring-2 ring-slate-800 ring-offset-2 ring-offset-transparent" : ""}`} /></button>
                       ))}
                     </div>
                   </div>
-                  <input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Add a short title…" className="w-full border-0 border-b border-black/10 bg-transparent px-0 py-2 text-base font-bold text-slate-900 outline-none placeholder:text-slate-500/70 focus:border-slate-500" />
-                  <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} required rows={4} placeholder="Jot down a reminder, idea or hand-off…" className="mt-3 w-full resize-y border-0 bg-transparent px-0 py-2 text-sm leading-6 text-slate-800 outline-none placeholder:text-slate-500/70" />
-                  <div className="mt-2 flex items-center justify-between gap-2">
+                  <input value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} aria-label="Note title" placeholder="Add a short title…" className="min-h-11 w-full border-0 border-b border-black/10 bg-transparent px-0 py-2 text-base font-bold text-slate-900 outline-none placeholder:text-slate-500/70 focus:border-slate-500" />
+                  <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} required rows={4} aria-label="Note text" placeholder="Jot down a reminder, idea or hand-off…" className="mt-3 w-full resize-y border-0 bg-transparent px-0 py-2 text-base leading-6 text-slate-800 outline-none placeholder:text-slate-500/70" />
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-[11px] font-medium text-slate-600">{editingNoteId ? "Changes stay here until you save." : "Your note will be pinned to this wall."}</span>
-                    <div className="flex shrink-0 gap-2">
-                      {editingNoteId && <button type="button" onClick={() => { setEditingNoteId(null); setNoteTitle(""); setNoteBody(""); setNoteColor("yellow"); setSyncMessage(""); }} className="rounded-lg bg-white/60 px-3 py-2 text-xs font-semibold text-slate-700">Cancel</button>}
-                      <button disabled={noteBusy} type="submit" className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-60">{!editingNoteId && <Plus className="h-3.5 w-3.5" />}{noteBusy ? "Saving…" : editingNoteId ? "Pin changes" : "Pin note"}</button>
+                    <div className="flex gap-2 sm:shrink-0">
+                      {editingNoteId && <button type="button" onClick={() => { setEditingNoteId(null); setNoteTitle(""); setNoteBody(""); setNoteColor("yellow"); setShowNoteComposer(false); setSyncMessage(""); }} className="min-h-11 flex-1 rounded-lg bg-white/70 px-3 text-sm font-semibold text-slate-700 sm:flex-none">Cancel</button>}
+                      <button disabled={noteBusy} type="submit" className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-60 sm:flex-none">{!editingNoteId && <Plus className="h-4 w-4" />}{noteBusy ? "Saving…" : editingNoteId ? "Save changes" : "Pin note"}</button>
                     </div>
                   </div>
                 </form>}
@@ -3252,9 +3868,9 @@ export default function Home() {
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                       <input value={noteSearch} onChange={(event) => setNoteSearch(event.target.value)} placeholder="Search notes" className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-amber-400" />
                     </label>
-                    <div className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1">
+                    <div role="group" aria-label="Filter sticky notes by color" className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1">
                       {(["all", "yellow", "blue", "green", "pink"] as const).map((color) => (
-                        <button key={color} type="button" onClick={() => setNoteColorFilter(color)} aria-pressed={noteColorFilter === color} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold capitalize ${noteColorFilter === color ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{color === "all" ? "All notes" : color}</button>
+                        <button key={color} type="button" onClick={() => setNoteColorFilter(color)} aria-pressed={noteColorFilter === color} className={`min-h-11 shrink-0 rounded-lg px-3 text-xs font-semibold capitalize ${noteColorFilter === color ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{color === "all" ? "All notes" : color}</button>
                       ))}
                     </div>
                   </div>
@@ -3268,8 +3884,8 @@ export default function Home() {
                         <div className="flex items-start justify-between gap-3">
                           <h2 className="min-w-0 flex-1 break-words text-lg font-bold text-slate-900">{note.title || "Untitled note"}</h2>
                           {canManageModule("notes") && note.authorId === user?.id && <div className="flex shrink-0 items-center gap-1">
-                            <button type="button" onClick={() => startEditingNote(note)} aria-label={`Edit ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-500 transition hover:bg-white/70 hover:text-slate-900"><Pencil className="h-4 w-4" /></button>
-                            <button type="button" onClick={() => void handleDeleteNote(note)} aria-label={`Delete ${note.title || "note"}`} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/70 hover:text-rose-600"><X className="h-4 w-4" /></button>
+                            <button type="button" onClick={() => startEditingNote(note)} aria-label={`Edit ${note.title || "note"}`} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white/70 hover:text-slate-900"><Pencil className="h-4 w-4" /></button>
+                            <button type="button" onClick={() => void handleDeleteNote(note)} aria-label={`Delete ${note.title || "note"}`} className="flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white/70 hover:text-rose-600"><X className="h-4 w-4" /></button>
                           </div>}
                         </div>
                         <button type="button" onClick={() => startEditingNote(note)} disabled={note.authorId !== user?.id} aria-label={`Open ${note.title || "note"} to edit`} className="mt-3 flex-1 cursor-text whitespace-pre-wrap break-words text-left text-sm leading-6 text-slate-700 disabled:cursor-default">{note.body}</button>
@@ -3281,9 +3897,9 @@ export default function Home() {
                           </div>
                           <div className="flex shrink-0 items-center gap-1">
                             {canManageModule("notes") && note.authorId === user?.id && (["yellow", "blue", "green", "pink"] as WorkspaceNote["color"][]).map((color) => (
-                              <button key={color} type="button" onClick={() => void handleNoteColorChange(note, color)} aria-label={`Change note color to ${color}`} aria-pressed={note.color === color} className={`h-3.5 w-3.5 rounded-full ${color === "yellow" ? "bg-amber-300" : color === "blue" ? "bg-sky-300" : color === "green" ? "bg-emerald-300" : "bg-pink-300"} ${note.color === color ? "ring-2 ring-slate-700 ring-offset-1" : ""}`} />
+                              <button key={color} type="button" onClick={() => void handleNoteColorChange(note, color)} aria-label={`Change note color to ${color}`} aria-pressed={note.color === color} className="flex h-9 w-9 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-800"><span aria-hidden="true" className={`h-3.5 w-3.5 rounded-full ${color === "yellow" ? "bg-amber-300" : color === "blue" ? "bg-sky-300" : color === "green" ? "bg-emerald-300" : "bg-pink-300"} ${note.color === color ? "ring-2 ring-slate-700 ring-offset-1" : ""}`} /></button>
                             ))}
-                            {canManageModule("notes") && note.authorId === user?.id && <button type="button" onClick={() => setSharingNote(note)} aria-label={`Share ${note.title || "note"}`} className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-white"><Share2 className="h-3.5 w-3.5" /> Share</button>}
+                            {canManageModule("notes") && note.authorId === user?.id && <button type="button" onClick={() => setSharingNote(note)} aria-label={`Share ${note.title || "note"}`} className="ml-1 inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-white/80 px-3 text-xs font-semibold text-slate-700 transition hover:bg-white"><Share2 className="h-4 w-4" /> Share</button>}
                           </div>
                         </div>
                       </article>
@@ -3300,40 +3916,40 @@ export default function Home() {
             )}
 
             {view === "settings" && (
-              <section className="max-w-2xl">
+              <section className="mx-auto max-w-3xl pb-4">
                 <div className="mb-5">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Account preferences</div>
                   <h1 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">Settings</h1>
-                  <p className="mt-2 text-sm text-slate-500">Update your profile details for this workspace.</p>
+                  <p className="mt-2 text-sm text-slate-500">Personal preferences and workspace details.</p>
                 </div>
-                <form onSubmit={handleProfileSave} className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
+                <form onSubmit={handleProfileSave} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
                   <div className="mb-5 flex items-center gap-3">
                     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-sm font-black text-emerald-800">{profileName.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase() || "U"}</div>
-                    <div><div className="font-bold text-slate-900">{profileName || "Workspace member"}</div><div className="text-sm text-slate-500">{user.email}</div></div>
+                    <div className="min-w-0"><div className="truncate font-bold text-slate-900">{profileName || "Workspace member"}</div><div className="break-all text-sm text-slate-500">{user.email}</div></div>
                   </div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Display name</label>
-                  <input value={profileName} onChange={(event) => setProfileName(event.target.value)} required className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none" />
+                  <label htmlFor="profile-display-name" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Display name</label>
+                  <input id="profile-display-name" value={profileName} onChange={(event) => setProfileName(event.target.value)} required autoComplete="name" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                     <div className="font-semibold text-slate-800">Workspace role</div>
                     <div className="mt-1 capitalize">{currentRole ?? "Member"}</div>
                   </div>
-                  <div className="mt-4 flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div><div className="text-sm font-semibold text-slate-800">Dark mode</div><div className="mt-1 text-xs text-slate-500">Optimized for low-light field work.</div></div>
-                    <button type="button" onClick={() => setDarkMode((current) => !current)} aria-pressed={darkMode} className={`relative h-7 w-12 rounded-full transition ${darkMode ? "bg-emerald-600" : "bg-slate-300"}`}><span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${darkMode ? "left-6" : "left-1"}`} /></button>
+                    <button type="button" onClick={() => setDarkMode((current) => !current)} aria-label="Dark mode" aria-pressed={darkMode} className={`relative h-8 w-14 shrink-0 rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 ${darkMode ? "bg-emerald-600" : "bg-slate-300"}`}><span className={`absolute top-1 h-6 w-6 rounded-full bg-white shadow transition ${darkMode ? "left-7" : "left-1"}`} /></button>
                   </div>
                   <div className="mt-5 flex justify-end">
-                    <button disabled={settingsBusy} type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{settingsBusy ? "Saving…" : "Save settings"}</button>
+                    <button disabled={settingsBusy} type="submit" className="min-h-12 w-full rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white disabled:opacity-60 sm:w-auto">{settingsBusy ? "Saving…" : "Save settings"}</button>
                   </div>
                 </form>
                 {canManageModule("settings") && (
-                  <form onSubmit={handleOrganizationSave} className="mt-5 rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
+                  <form onSubmit={handleOrganizationSave} className="mt-5 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
                     <div className="mb-5"><h2 className="text-lg font-bold text-slate-900">Organization profile</h2><p className="mt-1 text-sm text-slate-500">Keep the workspace identity and operating timezone current.</p></div>
                     <div className="space-y-4">
-                      <div><label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Organization name</label><input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" /></div>
-                      <div><label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Website</label><input value={organizationWebsite} onChange={(event) => setOrganizationWebsite(event.target.value)} type="url" placeholder="https://example.com" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" /></div>
-                      <div><label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Timezone</label><select value={organizationTimezone} onChange={(event) => setOrganizationTimezone(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none"><option>UTC</option><option>Asia/Manila</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>America/New_York</option><option>America/Los_Angeles</option><option>Europe/London</option></select></div>
+                      <label className="block text-xs font-semibold text-slate-600">Organization name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} required className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                      <label className="block text-xs font-semibold text-slate-600">Website<input value={organizationWebsite} onChange={(event) => setOrganizationWebsite(event.target.value)} type="url" inputMode="url" placeholder="https://example.com" className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" /></label>
+                      <label className="block text-xs font-semibold text-slate-600">Timezone<select value={organizationTimezone} onChange={(event) => setOrganizationTimezone(event.target.value)} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><option>UTC</option><option>Asia/Manila</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>America/New_York</option><option>America/Los_Angeles</option><option>Europe/London</option></select></label>
                     </div>
-                    <div className="mt-5 flex justify-end"><button disabled={settingsBusy} type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{settingsBusy ? "Saving…" : "Save organization"}</button></div>
+                    <div className="mt-5 flex justify-end"><button disabled={settingsBusy} type="submit" className="min-h-12 w-full rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60 sm:w-auto">{settingsBusy ? "Saving…" : "Save organization"}</button></div>
                   </form>
                 )}
                 {(currentRole === "admin" || currentRole === "manager") && (
@@ -3348,10 +3964,10 @@ export default function Home() {
                           <div key={role.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 p-3">
                             <div className="min-w-0 flex-1">
                               <div className="font-semibold text-slate-800">{role.name}</div>
-                              <div className="truncate text-xs text-slate-500">{role.description || "No description"} · {members.filter((member) => member.customRoleId === role.id).length} employee assignments</div>
+                              <div className="text-xs text-slate-500">{role.description || "No description"} · {members.filter((member) => member.customRoleId === role.id).length + clients.filter((client) => client.customRoleId === role.id).length} assignments across employees and client portals</div>
                             </div>
-                            <button type="button" onClick={() => handleEditWorkspaceRole(role)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Edit</button>
-                            <button type="button" onClick={() => void handleDeleteWorkspaceRole(role)} className="rounded-lg border border-rose-100 px-3 py-2 text-xs font-semibold text-rose-700">Delete</button>
+                            <button type="button" onClick={() => handleEditWorkspaceRole(role)} className="min-h-11 rounded-lg border border-slate-200 px-4 text-xs font-semibold text-slate-700">Edit</button>
+                            <button type="button" onClick={() => void handleDeleteWorkspaceRole(role)} className="min-h-11 rounded-lg border border-rose-100 px-4 text-xs font-semibold text-rose-700">Delete</button>
                           </div>
                         ))}
                       </div>
@@ -3368,31 +3984,30 @@ export default function Home() {
                         </label>
                       </div>
                       <div className="overflow-hidden rounded-xl border border-slate-200">
-                        <div className="grid grid-cols-[1fr_5rem_5rem] bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5rem] bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:grid-cols-[minmax(0,1fr)_5rem_5rem]">
                           <span>Module</span><span className="text-center">View</span><span className="text-center">Manage</span>
                         </div>
                         {roleModules.map(({ id, label }) => {
                           const access = rolePermissions[id] ?? { view: false, manage: false };
                           return (
-                            <div key={id} className="grid grid-cols-[1fr_5rem_5rem] items-center border-t border-slate-100 px-3 py-2.5 text-sm">
+                            <div key={id} className="grid min-h-12 grid-cols-[minmax(0,1fr)_4.5rem_5rem] items-center border-t border-slate-100 px-3 py-1 text-sm sm:grid-cols-[minmax(0,1fr)_5rem_5rem]">
                               <span className="font-medium text-slate-700">{label}</span>
-                              <label className="flex justify-center" aria-label={`View ${label}`}>
+                              <label className="flex min-h-11 cursor-pointer items-center justify-center" aria-label={`View ${label}`}>
                                 <input type="checkbox" checked={access.view || access.manage} onChange={(event) => setRolePermissions((current) => ({
                                   ...current,
                                   [id]: { ...access, view: event.target.checked || access.manage },
-                                }))} className="h-4 w-4 accent-emerald-700" />
+                                }))} className="h-5 w-5 accent-emerald-700" />
                               </label>
-                              <label className="flex justify-center" aria-label={`Manage ${label}`}>
+                              <label className="flex min-h-11 cursor-pointer items-center justify-center" aria-label={`Manage ${label}`}>
                                 <input type="checkbox" checked={access.manage} onChange={(event) => setRolePermissions((current) => ({
                                   ...current,
                                   [id]: { view: event.target.checked || access.view, manage: event.target.checked },
-                                }))} className="h-4 w-4 accent-emerald-700" />
+                                }))} className="h-5 w-5 accent-emerald-700" />
                               </label>
                             </div>
                           );
                         })}
                       </div>
-                      {syncMessage && <div role="status" className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">{syncMessage}</div>}
                       <div className="flex justify-end gap-2">
                         {editingWorkspaceRoleId && <button type="button" onClick={resetRoleEditor} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600">Cancel</button>}
                         <button disabled={roleBusy} type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{roleBusy ? "Saving…" : editingWorkspaceRoleId ? "Save role" : "Create role"}</button>
@@ -3416,31 +4031,50 @@ export default function Home() {
       </div>
 
       <div className="fixed bottom-0 left-0 z-40 flex w-full items-center justify-around gap-1 border-t border-slate-800 bg-slate-950/95 px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.18)] backdrop-blur-xl lg:hidden">
-        {visibleNavItems.filter(({ id }) => id !== "all-tasks").slice(0, 5).map(({ label, id, icon: Icon }) => (
+        {visibleNavItems.filter(({ id }) => id !== "all-tasks").slice(0, 4).map(({ label, id, icon: Icon }) => (
           <button
             key={id}
             type="button"
             onClick={() => handleViewChange(id)}
+            aria-current={view === id ? "page" : undefined}
             className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 py-1.5 text-[10px] font-medium transition ${
               view === id ? "bg-emerald-600 text-white" : "text-slate-300"
-            }`}
+            } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`}
           >
             <Icon className="h-4 w-4" />
-            <span className="mt-1 max-w-full truncate leading-none">{id === "dashboard" ? "Home" : label === "My tasks" ? "Tasks" : id === "team" ? "Team" : label}</span>
+            <span className="mt-1 max-w-full truncate leading-none">{id === "dashboard" ? "Home" : label === "My tasks" ? "Tasks" : id === "team" ? "Team" : id === "executive" ? "Exec" : label}</span>
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="Open all pages"
+          aria-expanded={mobileNavOpen}
+          aria-haspopup="dialog"
+          className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 py-1.5 text-[10px] font-medium transition ${
+            mobileNavOpen || !visibleNavItems.filter(({ id }) => id !== "all-tasks").slice(0, 4).some(({ id }) => id === view)
+              ? "bg-emerald-600 text-white"
+              : "text-slate-300"
+          } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`}
+        >
+          <Menu className="h-4 w-4" />
+          <span className="mt-1 leading-none">More</span>
+        </button>
       </div>
 
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Mobile navigation">
           <button type="button" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" />
-          <aside className="relative flex h-full w-[min(86vw,22rem)] flex-col overflow-y-auto bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-5 shadow-2xl">
+          <aside className="relative flex h-full w-[min(86vw,22rem)] flex-col overflow-y-auto bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl">
             <div className="mb-8 flex items-center justify-between px-2">
               <div className="flex items-center gap-3">
-                <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className="h-20 w-20 object-contain" />
-                <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500">industrial operations</div>
+                <Image src="/logo.png" alt="Rigtech Engineering" width={900} height={900} className="h-16 w-16 object-contain" />
+                <div>
+                  <div className="text-sm font-bold text-slate-900">Rigtech</div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-slate-500">Operations</div>
+                </div>
               </div>
-              <button type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation" className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-600">
+              <button ref={mobileNavCloseRef} type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation" className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -3451,7 +4085,7 @@ export default function Home() {
             )}
             <nav className="flex-1 space-y-1 overflow-y-auto">{renderGroupedNavigation(true)}</nav>
             <div className="mt-auto flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">MA</div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">{userName.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase()}</div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold text-slate-800">{userName}</div>
                 <div className="truncate text-[11px] text-slate-500">{user.email}</div>
@@ -3465,21 +4099,21 @@ export default function Home() {
       )}
 
       {sharingNote && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center" onClick={() => setSharingNote(null)}>
-          <div role="dialog" aria-modal="true" aria-label="Share sticky note" onClick={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/40 backdrop-blur-sm sm:items-center sm:p-4" onClick={() => setSharingNote(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="share-note-dialog-title" onClick={(event) => event.stopPropagation()} className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-slate-200 bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-5 shadow-2xl sm:rounded-3xl sm:p-6">
             <div className="flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0">
                 <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700">Share note</div>
-                <h2 className="mt-1 text-xl font-black tracking-[-0.04em] text-slate-900">{sharingNote.title || "Untitled note"}</h2>
-                <p className="mt-2 line-clamp-2 text-sm text-slate-500">{sharingNote.body}</p>
+                <h2 id="share-note-dialog-title" className="mt-1 break-words text-xl font-black tracking-[-0.04em] text-slate-900">{sharingNote.title || "Untitled note"}</h2>
+                <p className="mt-2 line-clamp-3 break-words text-sm text-slate-500">{sharingNote.body}</p>
               </div>
-              <button type="button" onClick={() => setSharingNote(null)} aria-label="Close share dialog" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-600"><X className="h-4 w-4" /></button>
+              <button ref={shareNoteCloseRef} type="button" onClick={() => setSharingNote(null)} aria-label="Close share dialog" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
             </div>
             <div className="mt-6">
               <h3 className="text-sm font-bold text-slate-900">Share outside Rigtech</h3>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <button type="button" onClick={() => void handleShareExternally(sharingNote)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white"><Share2 className="h-4 w-4" /> Share from device</button>
-                <button type="button" onClick={() => void navigator.clipboard.writeText(`${sharingNote.title || "Sticky note"}\n\n${sharingNote.body}`).then(() => setSyncMessage("Sticky note copied to your clipboard."))} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold text-slate-700">Copy note text</button>
+                <button type="button" onClick={() => void handleShareExternally(sharingNote)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-semibold text-white"><Share2 className="h-4 w-4" /> Share from device</button>
+                <button type="button" onClick={() => void handleCopyNote(sharingNote)} className="min-h-12 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-700">Copy note text</button>
               </div>
             </div>
             <div className="mt-6">
@@ -3488,9 +4122,9 @@ export default function Home() {
                 <span className="text-xs text-slate-400">{members.length} members</span>
               </div>
               <p className="mt-1 text-xs text-slate-500">Choose a person and they will see this note in their Sticky notes view.</p>
-              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto">
+              <div className="mt-3 max-h-[40dvh] space-y-2 overflow-y-auto overscroll-contain">
                 {members.filter((member) => member.id !== user?.id).map((member) => (
-                  <button key={member.id} type="button" disabled={shareBusy} onClick={() => void handleShareInternally(sharingNote, member)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-60">
+                  <button key={member.id} type="button" disabled={shareBusy} onClick={() => void handleShareInternally(sharingNote, member)} className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 disabled:opacity-60">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-800">{member.name.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase()}</span>
                     <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-800">{member.name}</span><span className="block truncate text-xs text-slate-500">{member.email}</span></span>
                     <Share2 className="h-4 w-4 shrink-0 text-slate-400" />
@@ -3522,20 +4156,23 @@ export default function Home() {
       {selectedProject && (
         <div className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm" onClick={() => setSelectedProject(null)}>
           <motion.aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-detail-title"
             initial={{ x: 40, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 40, opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={(event) => event.stopPropagation()}
-            className="absolute right-0 top-0 h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:p-7"
+            className="absolute right-0 top-0 h-[100dvh] w-full max-w-3xl overflow-y-auto border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl sm:border-l sm:p-7"
           >
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-700">Project details</div>
-                <h2 className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-900">{selectedProject.project.name}</h2>
+                <h2 id="project-detail-title" className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-950">{selectedProject.project.name}</h2>
                 <p className="mt-2 text-sm text-slate-500">{selectedProject.project.description || "No project description yet."}</p>
               </div>
-              <button type="button" onClick={() => setSelectedProject(null)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-600"><X className="h-4 w-4" /></button>
+              <button ref={projectDetailCloseRef} type="button" onClick={() => setSelectedProject(null)} aria-label="Close project details" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
@@ -3550,18 +4187,26 @@ export default function Home() {
 
             <section className="mt-7">
               <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Milestones</h3><span className="text-xs text-slate-400">{selectedProject.milestones.filter((milestone) => milestone.completedAt).length}/{selectedProject.milestones.length} complete</span></div>
-              <form onSubmit={addProjectMilestone} className="mb-3 grid gap-2 sm:grid-cols-[1fr_9rem_auto]">
-                <input value={milestoneName} onChange={(event) => setMilestoneName(event.target.value)} required placeholder="Add milestone" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
-                <input value={milestoneDueDate} onChange={(event) => setMilestoneDueDate(event.target.value)} type="date" aria-label="Milestone due date" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none" />
-                <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Add</button>
-              </form>
+              {currentRole !== "client" && <form onSubmit={addProjectMilestone} className="mb-3 grid gap-2 sm:grid-cols-[1fr_9rem_auto]">
+                <input value={milestoneName} onChange={(event) => setMilestoneName(event.target.value)} required aria-label="Milestone name" placeholder="Add milestone" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm" />
+                <input value={milestoneDueDate} onChange={(event) => setMilestoneDueDate(event.target.value)} type="date" aria-label="Milestone due date" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:min-h-0 md:py-2.5 md:text-sm" />
+                <button type="submit" className="min-h-12 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 md:min-h-0">Add milestone</button>
+              </form>}
               <div className="space-y-2">
                 {selectedProject.milestones.map((milestone) => (
-                  <button key={milestone.id} type="button" onClick={() => void toggleProjectMilestone(milestone)} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-emerald-300">
-                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${milestone.completedAt ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}>{milestone.completedAt ? "✓" : ""}</span>
-                    <span className={`min-w-0 flex-1 text-sm font-semibold ${milestone.completedAt ? "text-slate-400 line-through" : "text-slate-800"}`}>{milestone.name}</span>
-                    <span className="text-xs text-slate-400">{milestone.dueDate ?? "No date"}</span>
-                  </button>
+                  currentRole === "client" ? (
+                    <div key={milestone.id} className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left">
+                      <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${milestone.completedAt ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}>{milestone.completedAt ? "✓" : ""}</span>
+                      <span className={`min-w-0 flex-1 text-sm font-semibold ${milestone.completedAt ? "text-slate-400 line-through" : "text-slate-800"}`}>{milestone.name}</span>
+                      <span className="text-xs text-slate-400">{milestone.dueDate ?? "No date"}</span>
+                    </div>
+                  ) : (
+                    <button key={milestone.id} type="button" onClick={() => void toggleProjectMilestone(milestone)} aria-pressed={Boolean(milestone.completedAt)} aria-label={`${milestone.completedAt ? "Reopen" : "Complete"} milestone ${milestone.name}`} className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left hover:border-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                      <span aria-hidden="true" className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-bold ${milestone.completedAt ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}>{milestone.completedAt ? "✓" : ""}</span>
+                      <span className={`min-w-0 flex-1 text-sm font-semibold ${milestone.completedAt ? "text-slate-400 line-through" : "text-slate-800"}`}>{milestone.name}</span>
+                      <span className="text-xs text-slate-400">{milestone.dueDate ?? "No date"}</span>
+                    </button>
+                  )
                 ))}
                 {!selectedProject.milestones.length && <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No milestones yet.</div>}
               </div>
@@ -3582,15 +4227,17 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="mt-7">
-              <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Attachments</h3>
-              {selectedProject.attachments.length ? <div className="space-y-2">{selectedProject.attachments.map((attachment) => <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><div className="min-w-0"><div className="truncate text-slate-700">{attachment.fileName}</div><div className="mt-1 text-[11px] text-slate-400">Uploaded {formatUploadedDate(attachment.uploadedAt)}</div></div>{attachment.url && <a href={attachment.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-semibold text-emerald-700">Open</a>}</div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No attachments on project tasks.</div>}
-            </section>
+            {currentRole !== "client" && <>
+              <section className="mt-7">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Attachments</h3>
+                {selectedProject.attachments.length ? <div className="space-y-2">{selectedProject.attachments.map((attachment) => <div key={attachment.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm"><div className="min-w-0"><div className="truncate text-slate-700">{attachment.fileName}</div><div className="mt-1 text-[11px] text-slate-400">Uploaded {formatUploadedDate(attachment.uploadedAt)}</div></div>{attachment.url && <a href={attachment.url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-semibold text-emerald-700">Open</a>}</div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No attachments on project tasks.</div>}
+              </section>
 
-            <section className="mt-7">
-              <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Comments</h3>
-              {selectedProject.comments.length ? <div className="space-y-2">{selectedProject.comments.map((comment) => <div key={comment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><div className="text-sm font-semibold text-slate-800">{comment.authorName}</div><div className="mt-1 text-sm text-slate-600">{comment.body}</div></div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No comments on project tasks.</div>}
-            </section>
+              <section className="mt-7">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Comments</h3>
+                {selectedProject.comments.length ? <div className="space-y-2">{selectedProject.comments.map((comment) => <div key={comment.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3"><div className="text-sm font-semibold text-slate-800">{comment.authorName}</div><div className="mt-1 text-sm text-slate-600">{comment.body}</div></div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">No comments on project tasks.</div>}
+              </section>
+            </>}
           </motion.aside>
         </div>
       )}
@@ -3598,20 +4245,23 @@ export default function Home() {
       {selectedTask && (
         <div className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-sm" onClick={() => setSelectedTask(null)}>
           <motion.aside
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Task details: ${selectedTask.title}`}
             initial={{ x: 40, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 40, opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={(event) => event.stopPropagation()}
-            className="absolute right-0 top-0 h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 bg-white p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:p-6"
+            className="absolute right-0 top-0 h-[100dvh] w-full max-w-xl overflow-y-auto border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl sm:border-l sm:p-6"
           >
             <div className="mb-5 flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Task details</div>
               <div className="flex items-center gap-2">
-                {canManageModule("tasks") && <button type="button" onClick={() => void handleDeleteTask(selectedTask)} aria-label={`Delete task ${selectedTask.title}`} title="Delete task and subtasks" className="flex h-9 w-9 items-center justify-center rounded-full border border-rose-200 text-rose-600 transition hover:bg-rose-50">
+                {canManageModule("tasks") && <button type="button" onClick={() => void handleDeleteTask(selectedTask)} aria-label={`Delete task ${selectedTask.title}`} title="Delete task and subtasks" className="flex h-11 w-11 items-center justify-center rounded-xl border border-rose-200 text-rose-600 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600">
                   <Trash2 className="h-4 w-4" />
                 </button>}
-                <button type="button" onClick={() => setSelectedTask(null)} aria-label="Close task details" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600">
+                <button ref={taskDetailCloseRef} type="button" onClick={() => setSelectedTask(null)} aria-label="Close task details" className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
                   <X className="h-4 w-4" />
                 </button>
               </div>
@@ -3626,8 +4276,8 @@ export default function Home() {
             </div>
 
             <form onSubmit={handleTaskTitleSave} className="flex items-start gap-2">
-              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} readOnly={!canManageModule("tasks")} className="min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-0 text-3xl font-black tracking-[-0.06em] text-slate-900 outline-none focus:border-slate-200 focus:bg-slate-50 focus:px-2" aria-label="Task title" />
-              {canManageModule("tasks") && titleDraft.trim() !== selectedTask.title && <button disabled={titleBusy} type="submit" className="mt-1 shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{titleBusy ? "Saving…" : "Save"}</button>}
+              <input value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} readOnly={!canManageModule("tasks")} className="min-h-12 min-w-0 flex-1 rounded-xl border border-transparent bg-transparent px-0 text-2xl font-black tracking-[-0.06em] text-slate-900 outline-none focus:border-slate-200 focus:bg-slate-50 focus:px-2 sm:text-3xl" aria-label="Task title" />
+              {canManageModule("tasks") && titleDraft.trim() !== selectedTask.title && <button disabled={titleBusy} type="submit" className="mt-1 min-h-11 shrink-0 rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white disabled:opacity-60">{titleBusy ? "Saving…" : "Save"}</button>}
             </form>
             <div className="mt-4 flex flex-wrap gap-2">
               <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${getPriorityClasses(selectedTask.priority)}`}>{selectedTask.priority}</span>
@@ -3636,7 +4286,7 @@ export default function Home() {
                 <select
                   value={selectedTask.status}
                   onChange={(event) => void handleTaskStatusChange(selectedTask, event.target.value as TaskStatus)}
-                  className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-700 outline-none"
+                  className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"
                   aria-label="Change task status"
                 >
                   {(["To do", "In progress", "Waiting", "Completed"] as TaskStatus[]).map((option) => <option key={option}>{option}</option>)}
@@ -3644,11 +4294,35 @@ export default function Home() {
               )}
             </div>
 
+            {canManageModule("tasks") && (
+              <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3" aria-labelledby="task-assignment-heading">
+                <div id="task-assignment-heading" className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">Assigned team</div>
+                <TaskAssigneeSelect
+                  members={members}
+                  currentUserId={user?.id ?? ""}
+                  selectedIds={taskAssigneeDraft}
+                  onSelectionChange={setTaskAssigneeDraft}
+                  ariaLabel="Choose task assignees"
+                />
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-xs text-slate-600">{taskAssigneeDraft.length} selected</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleTaskAssigneesSave()}
+                    disabled={assigneeBusy || (taskAssigneeDraft.length === selectedTask.assigneeIds.length && taskAssigneeDraft.every((id, index) => id === selectedTask.assigneeIds[index]))}
+                    className="min-h-11 rounded-xl bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {assigneeBusy ? "Saving…" : "Save assignments"}
+                  </button>
+                </div>
+              </section>
+            )}
+
             <form onSubmit={handleTaskDescriptionSave} className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">Description</div>
-              <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} readOnly={!canManageModule("tasks")} rows={3} placeholder="Add task details, scope or handoff notes..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 text-slate-700 outline-none placeholder:text-slate-400" />
+              <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)} readOnly={!canManageModule("tasks")} rows={3} placeholder="Add task details, scope or handoff notes..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-base leading-6 text-slate-700 outline-none placeholder:text-slate-400 sm:text-sm" />
               {canManageModule("tasks") && <div className="mt-2 flex justify-end">
-                <button disabled={descriptionBusy} type="submit" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60">{descriptionBusy ? "Saving…" : "Save description"}</button>
+                <button disabled={descriptionBusy} type="submit" className="min-h-11 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60">{descriptionBusy ? "Saving…" : "Save description"}</button>
               </div>}
             </form>
 
@@ -3691,10 +4365,10 @@ export default function Home() {
                   {subtaskParentId && <button type="button" onClick={() => { setSubtaskParentId(null); setSubtaskDescription(""); }} className="text-xs font-semibold text-slate-400 hover:text-slate-700">Cancel nesting</button>}
                 </div>
                 <div className="flex gap-2">
-                  <input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} required placeholder={subtaskParentId ? "Add a subtask under this item..." : "Add a subtask..."} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none" />
-                  <button disabled={subtaskBusy} type="submit" className="rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{subtaskBusy ? "…" : "Add"}</button>
+                  <input value={subtaskTitle} onChange={(event) => setSubtaskTitle(event.target.value)} required placeholder={subtaskParentId ? "Add a subtask under this item..." : "Add a subtask..."} className="min-h-12 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-base outline-none sm:text-sm" />
+                  <button disabled={subtaskBusy} type="submit" className="min-h-12 shrink-0 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white disabled:opacity-60">{subtaskBusy ? "…" : "Add"}</button>
                 </div>
-                <textarea value={subtaskDescription} onChange={(event) => setSubtaskDescription(event.target.value)} rows={2} placeholder="Optional description..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none placeholder:text-slate-400" />
+                <textarea value={subtaskDescription} onChange={(event) => setSubtaskDescription(event.target.value)} rows={2} placeholder="Optional description..." className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-3 text-base outline-none placeholder:text-slate-400 sm:text-sm" />
               </form>}
 
               <div className="space-y-2">
@@ -3738,9 +4412,9 @@ export default function Home() {
             <div className="mt-6">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Attachments</h3>
-                {canManageModule("tasks") && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700">
+                {canManageModule("tasks") && <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-300 hover:text-emerald-700 focus-within:ring-2 focus-within:ring-emerald-700 focus-within:ring-offset-2">
                   <Paperclip className="h-3.5 w-3.5" /> {attachmentBusy ? "Uploading…" : "Add file"}
-                  <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" capture="environment" onChange={handleUploadAttachment} disabled={attachmentBusy} className="hidden" />
+                  <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" capture="environment" onChange={handleUploadAttachment} disabled={attachmentBusy} className="sr-only" />
                 </label>}
               </div>
               {canManageModule("tasks") && attachmentRetry && (
@@ -3787,65 +4461,64 @@ export default function Home() {
       )}
 
       {editingMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onClick={() => setEditingMember(null)}>
-          <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 backdrop-blur-sm sm:items-center sm:p-4" onClick={() => setEditingMember(null)}>
+          <motion.div role="dialog" aria-modal="true" aria-labelledby="edit-employee-title" initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="max-h-[96dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-slate-200 bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl sm:rounded-3xl sm:p-6">
             <div className="mb-6 flex items-center justify-between">
-              <div><div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Employee management</div><h2 className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900">Edit employee</h2></div>
-              <button type="button" onClick={() => setEditingMember(null)} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600"><X className="h-4 w-4" /></button>
+              <div><div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Employee management</div><h2 id="edit-employee-title" className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900">Edit employee</h2></div>
+              <button ref={editMemberCloseRef} type="button" onClick={() => setEditingMember(null)} aria-label="Close edit employee" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
             </div>
             <form onSubmit={handleSaveMember} className="space-y-4">
-              <input value={managementMemberName} onChange={(event) => setManagementMemberName(event.target.value)} required placeholder="Full name" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" />
-              <input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" placeholder="Login email" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" />
-              <input value={managementPassword} onChange={(event) => setManagementPassword(event.target.value)} minLength={8} type="password" placeholder="New password (leave blank to keep current)" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" />
+              <input value={managementMemberName} onChange={(event) => setManagementMemberName(event.target.value)} required aria-label="Full name" placeholder="Full name" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none" />
+              <input value={managementEmail} onChange={(event) => setManagementEmail(event.target.value)} required type="email" aria-label="Login email" placeholder="Login email" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none" />
+              <input value={managementPassword} onChange={(event) => setManagementPassword(event.target.value)} minLength={8} type="password" aria-label="New password" placeholder="New password (leave blank to keep current)" className="min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none" />
               <div className="grid gap-3 sm:grid-cols-2">
-                <select value={managementRole} onChange={(event) => setManagementRole(event.target.value as WorkspaceMember["role"])} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
+                <select value={managementRole} onChange={(event) => setManagementRole(event.target.value as WorkspaceMember["role"])} aria-label="Built-in role" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none">
                   <option value="employee">Employee</option><option value="supervisor">Supervisor</option><option value="manager">Manager</option><option value="admin">Admin</option>
                 </select>
-                {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
+                {canAssignCustomRoles && <select value={managementCustomRoleId} onChange={(event) => setManagementCustomRoleId(event.target.value)} aria-label="Custom access profile" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none">
                   <option value="">Built-in permissions</option>{workspaceRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
                 </select>}
                 <fieldset className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                  <legend className="px-1 text-xs font-semibold text-slate-600">Departments</legend>
+                  <legend className="px-1 text-xs font-semibold text-slate-600">Departments · select any</legend>
                   <div className="max-h-36 space-y-1 overflow-y-auto">
                     {departments.length ? departments.map((department) => (
-                      <label key={department.id} className="flex cursor-pointer items-center gap-2 py-1 text-sm text-slate-700">
-                        <input type="checkbox" checked={managementDepartmentIds.includes(department.id)} onChange={() => toggleManagementDepartment(department.id)} className="h-4 w-4 accent-emerald-700" />
+                      <label key={department.id} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-700">
+                        <input type="checkbox" checked={managementDepartmentIds.includes(department.id)} onChange={() => toggleManagementDepartment(department.id)} className="h-5 w-5 accent-emerald-700" />
                         {department.name}
                       </label>
                     )) : <span className="text-sm text-slate-500">No departments created.</span>}
                   </div>
                 </fieldset>
-                <select value={managementTeamId} onChange={(event) => setManagementTeamId(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
+                <select value={managementTeamId} onChange={(event) => setManagementTeamId(event.target.value)} aria-label="Team" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none">
                   <option value="">No team</option>{teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
                 </select>
-                <select value={managementAvailability} onChange={(event) => setManagementAvailability(event.target.value as WorkspaceMember["availabilityStatus"])} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none">
+                <select value={managementAvailability} onChange={(event) => setManagementAvailability(event.target.value as WorkspaceMember["availabilityStatus"])} aria-label="Availability" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none">
                   <option value="available">Available</option><option value="limited">Limited</option><option value="unavailable">Unavailable</option><option value="leave">On leave</option>
                 </select>
-                <input value={managementCapacity} onChange={(event) => setManagementCapacity(event.target.value)} type="number" min="0" max="168" step="0.5" placeholder="Hours/week" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" />
-                <input value={managementMaxTasks} onChange={(event) => setManagementMaxTasks(event.target.value)} type="number" min="0" placeholder="Max active tasks" className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none" />
+                <input value={managementCapacity} onChange={(event) => setManagementCapacity(event.target.value)} type="number" min="0" max="168" step="0.5" aria-label="Hours per week" placeholder="Hours/week" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none" />
+                <input value={managementMaxTasks} onChange={(event) => setManagementMaxTasks(event.target.value)} type="number" min="0" aria-label="Maximum active tasks" placeholder="Max active tasks" className="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 text-base outline-none" />
               </div>
-              {syncMessage && <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{syncMessage}</div>}
-              <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setEditingMember(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700">Cancel</button><button disabled={managementBusy} type="submit" className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{managementBusy ? "Saving…" : "Save changes"}</button></div>
+              <div className="flex gap-2 pt-2"><button type="button" onClick={() => setEditingMember(null)} className="min-h-11 flex-1 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Cancel</button><button disabled={managementBusy} type="submit" className="min-h-11 flex-1 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white disabled:opacity-60">{managementBusy ? "Saving…" : "Save changes"}</button></div>
             </form>
           </motion.div>
         </div>
       )}
 
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onClick={() => setShowCreate(false)}>
-          <motion.div initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 backdrop-blur-sm sm:items-center sm:p-4" onClick={() => setShowCreate(false)}>
+          <motion.div role="dialog" aria-modal="true" aria-labelledby="create-task-title" initial={{ scale: 0.97, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} onClick={(event) => event.stopPropagation()} className="max-h-[100dvh] w-full max-w-xl overflow-y-auto rounded-t-3xl border border-slate-200 bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl sm:rounded-3xl sm:p-6">
             <div className="mb-6 flex items-center justify-between">
               <div>
                 <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Task creation</div>
-                <h2 className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900">Create a task</h2>
+                <h2 id="create-task-title" className="mt-2 text-2xl font-black tracking-[-0.06em] text-slate-900">Create a task</h2>
               </div>
-              <button type="button" onClick={() => setShowCreate(false)} className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-600"><X className="h-4 w-4" /></button>
+              <button ref={createTaskCloseRef} type="button" onClick={() => setShowCreate(false)} aria-label="Close create task form" className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
             </div>
 
             <form onSubmit={handleCreateTask} className="space-y-4">
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">What needs to be done?</label>
-                <input name="title" required placeholder="e.g. Repair Mud Tank 32 side panel" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
+                <label htmlFor="create-task-title-input" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">What needs to be done?</label>
+                <input id="create-task-title-input" name="title" required placeholder="e.g. Repair Mud Tank 32 side panel" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none placeholder:text-slate-500 focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm" />
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -3855,15 +4528,15 @@ export default function Home() {
                   <p className="mt-1 text-[11px] text-slate-400">Select one or more people. The first selected person is the primary assignee.</p>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Project</label>
-                  <select name="project_id" defaultValue="" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                  <label htmlFor="create-task-project" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Project</label>
+                  <select id="create-task-project" name="project_id" defaultValue="" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm">
                     <option value="">Standalone task</option>
                     {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Priority</label>
-                  <select name="priority" defaultValue="Medium" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                  <label htmlFor="create-task-priority" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Priority</label>
+                  <select id="create-task-priority" name="priority" defaultValue="Medium" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm">
                     <option>Urgent</option>
                     <option>High</option>
                     <option>Medium</option>
@@ -3873,8 +4546,8 @@ export default function Home() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Client visibility</label>
-                <select name="visibility" defaultValue="internal" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                <label htmlFor="create-task-visibility" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Client visibility</label>
+                <select id="create-task-visibility" name="visibility" defaultValue="internal" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm">
                   <option value="internal">Internal only</option>
                   <option value="client_visible">Visible to selected client</option>
                 </select>
@@ -3882,12 +4555,12 @@ export default function Home() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Due date</label>
-                  <input name="due" type="date" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none" />
+                  <label htmlFor="create-task-due" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Due date</label>
+                  <input id="create-task-due" name="due" type="date" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm" />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Client</label>
-                  <select name="client_id" defaultValue="" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none">
+                  <label htmlFor="create-task-client" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Client</label>
+                  <select id="create-task-client" name="client_id" defaultValue="" className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm">
                     <option value="">Internal / no client</option>
                     {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
                   </select>
@@ -3895,14 +4568,14 @@ export default function Home() {
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Description</label>
-                <textarea name="description" rows={3} placeholder="Add context, scope or handoff details..." className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none placeholder:text-slate-400" />
+                <label htmlFor="create-task-description" className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Description</label>
+                <textarea id="create-task-description" name="description" rows={3} placeholder="Add context, scope or handoff details..." className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base text-slate-900 outline-none placeholder:text-slate-500 focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm" />
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Subtasks</label>
+                    <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Subtasks</h3>
                     <p className="mt-1 text-xs text-slate-500">Add the checklist items needed to complete this task.</p>
                   </div>
                   <span className="text-xs font-semibold text-slate-400">{newSubtasks.length}</span>
@@ -3920,8 +4593,9 @@ export default function Home() {
                         setNewSubtaskTitle("");
                       }
                     }}
+                    aria-label="New subtask title"
                     placeholder="Add a subtask..."
-                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-900 outline-none placeholder:text-slate-500 focus-visible:ring-2 focus-visible:ring-emerald-700 md:text-sm"
                   />
                   <button
                     type="button"
@@ -3931,7 +4605,7 @@ export default function Home() {
                       setNewSubtasks((current) => [...current, title]);
                       setNewSubtaskTitle("");
                     }}
-                    className="rounded-xl bg-emerald-700 px-3 py-2.5 text-sm font-semibold text-white"
+                    className="min-h-11 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
                   >
                     Add
                   </button>
