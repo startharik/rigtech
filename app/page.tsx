@@ -1575,10 +1575,11 @@ export default function Home() {
       .select("id")
       .maybeSingle();
     if (error || !data) {
-      const linkedDocuments = error?.code === "23503" && `${error.message} ${error.details ?? ""}`.includes("workspace_documents");
+      const errorText = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`;
+      const linkedDocuments = error?.code === "23503" && errorText.includes("workspace_documents");
       setSyncMessage(linkedDocuments
         ? "Unable to delete this project while documents are linked to it. Move or delete its documents first."
-        : `Unable to delete project: ${error?.message ?? "The project was not deleted. Check your access and try again."}`);
+        : `Unable to delete project: ${error?.message ?? "No project was deleted. Your account may be missing project-management access, or the project may have linked documents. Refresh and try again; contact an admin if the problem continues."}`);
       setProjectDetailBusy(false);
       return;
     }
