@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Clock3,
   Layers3,
+  Newspaper,
   RefreshCw,
   Users,
 } from "lucide-react";
@@ -52,6 +53,8 @@ type DisplayMember = {
   name: string;
 };
 type MonthlyWork = { label: string; created: number; completed: number };
+type NewsHeadline = { title: string; url: string; source: string; publishedAt: string | null };
+type NewsResponse = { headlines: NewsHeadline[]; source: string; error: string | null };
 type DashboardData = {
   organizationName: string;
   projects: DisplayProject[];
@@ -69,9 +72,9 @@ const statusLabels: Record<(typeof statusOrder)[number], string> = {
 };
 const statusColors: Record<(typeof statusOrder)[number], string> = {
   completed: "#c29337",
-  in_progress: "#111827",
-  waiting: "#9ca3af",
-  todo: "#e5e7eb",
+  in_progress: "#4f7cff",
+  waiting: "#a78bfa",
+  todo: "#2dd4bf",
 };
 const displayStatus = (status: string): (typeof statusOrder)[number] =>
   status === "completed" ? "completed" :
@@ -83,6 +86,13 @@ const dateKey = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 const safeError = (error: unknown) => error instanceof Error ? error.message : "Unexpected network error.";
+const formatNewsTime = (value: string | null) => {
+  if (!value) return "LATEST";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "LATEST"
+    : new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+};
 
 function StatusDonut({ counts, total }: { counts: Record<(typeof statusOrder)[number], number>; total: number }) {
   const circumference = 2 * Math.PI * 42;
@@ -90,7 +100,7 @@ function StatusDonut({ counts, total }: { counts: Record<(typeof statusOrder)[nu
     <div className="flex items-center gap-5">
       <div className="relative h-32 w-32 shrink-0">
         <svg viewBox="0 0 100 100" role="img" aria-label={`Task status distribution across ${total} tasks`} className="h-full w-full -rotate-90">
-          <circle cx="50" cy="50" r="42" fill="none" stroke="#f3f4f6" strokeWidth="11" />
+          <circle cx="50" cy="50" r="42" fill="none" stroke="#26354a" strokeWidth="11" />
           {statusOrder.map((status, index) => {
             const length = total ? circumference * counts[status] / total : 0;
             const currentOffset = statusOrder.slice(0, index).reduce(
@@ -114,18 +124,18 @@ function StatusDonut({ counts, total }: { counts: Record<(typeof statusOrder)[nu
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-3xl font-black tracking-[-0.06em] text-[#111827]">{total}</span>
-          <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#6b7280]">work items</span>
+          <span className="text-3xl font-black tracking-[-0.06em] text-white">{total}</span>
+          <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9aa9bd]">work items</span>
         </div>
       </div>
       <div className="min-w-0 flex-1 space-y-2.5">
         {statusOrder.map((status) => (
           <div key={status} className="flex items-center justify-between gap-3">
-            <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-[#4b5563]">
+            <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-[#bac6d6]">
               <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: statusColors[status] }} />
               <span className="truncate">{statusLabels[status]}</span>
             </span>
-            <span className="text-xs font-bold tabular-nums text-[#111827]">{counts[status]}</span>
+            <span className="text-xs font-bold tabular-nums text-white">{counts[status]}</span>
           </div>
         ))}
       </div>
@@ -146,22 +156,22 @@ function WorkTrend({ data }: { data: MonthlyWork[] }) {
   return (
     <div>
       <div className="mb-3 flex items-center gap-4">
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#4b5563]"><span className="h-2 w-2 rounded-full bg-[#c29337]" />Created</span>
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#4b5563]"><span className="h-2 w-2 rounded-full bg-[#111827]" />Completed</span>
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#bac6d6]"><span className="h-2 w-2 rounded-full bg-[#c29337]" />Created</span>
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold text-[#bac6d6]"><span className="h-2 w-2 rounded-full bg-[#4f7cff]" />Completed</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="Monthly task creation and completion trend" className="h-36 w-full overflow-visible">
         {[0, 1, 2, 3].map((line) => {
           const lineY = 16 + line * 39;
-          return <line key={line} x1="24" x2={width - 24} y1={lineY} y2={lineY} stroke="#e5e7eb" strokeDasharray="3 5" />;
+          return <line key={line} x1="24" x2={width - 24} y1={lineY} y2={lineY} stroke="#33445c" strokeDasharray="3 5" />;
         })}
         <path d={`${createdPath} L ${x(data.length - 1)} ${height - 25} L ${x(0)} ${height - 25} Z`} fill="#c29337" opacity="0.09" />
-        <path d={createdPath} fill="none" stroke="#c29337" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        <path d={completedPath} fill="none" stroke="#111827" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <path className="tv-trend-line" d={createdPath} fill="none" stroke="#c29337" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        <path className="tv-trend-line tv-trend-line-delay" d={completedPath} fill="none" stroke="#4f7cff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
         {data.map((point, index) => (
           <g key={point.label}>
-            <circle cx={x(index)} cy={y(point.created)} r="3.5" fill="#c29337" stroke="white" strokeWidth="2" />
-            <circle cx={x(index)} cy={y(point.completed)} r="3.5" fill="#111827" stroke="white" strokeWidth="2" />
-            <text x={x(index)} y={height - 3} textAnchor="middle" fill="#6b7280" fontSize="9" fontWeight="600">{point.label}</text>
+            <circle className="tv-chart-point" cx={x(index)} cy={y(point.created)} r="3.5" fill="#c29337" stroke="#172338" strokeWidth="2" />
+            <circle className="tv-chart-point tv-chart-point-delay" cx={x(index)} cy={y(point.completed)} r="3.5" fill="#4f7cff" stroke="#172338" strokeWidth="2" />
+            <text x={x(index)} y={height - 3} textAnchor="middle" fill="#9aa9bd" fontSize="9" fontWeight="600">{point.label}</text>
           </g>
         ))}
       </svg>
@@ -171,6 +181,10 @@ function WorkTrend({ data }: { data: MonthlyWork[] }) {
 
 export default function TvDashboard() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [displayOrganizationId, setDisplayOrganizationId] = useState<string | null>(null);
+  const [news, setNews] = useState<NewsResponse | null>(null);
+  const [newsStatus, setNewsStatus] = useState<"connecting" | "live" | "unavailable">("connecting");
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "polling">("connecting");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [clock, setClock] = useState(() => new Date());
@@ -204,6 +218,7 @@ export default function TvDashboard() {
       if (membershipError) throw new Error(`Unable to load display organization: ${membershipError.message}`);
       if (!membership) throw new Error("The TV display account is not attached to an organization.");
       const organizationId = membership.organization_id;
+      setDisplayOrganizationId(organizationId);
 
       const [
         organizationResult,
@@ -266,14 +281,75 @@ export default function TvDashboard() {
 
   useEffect(() => {
     const initialLoadTimer = window.setTimeout(() => void loadDashboard(), 0);
-    const refreshTimer = window.setInterval(() => void loadDashboard(), 5 * 60 * 1000);
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
     return () => {
       window.clearTimeout(initialLoadTimer);
-      window.clearInterval(refreshTimer);
       window.clearInterval(clockTimer);
     };
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!displayOrganizationId) return;
+    let refreshTimeout = 0;
+    const channel = supabase
+      .channel(`tv-dashboard:${displayOrganizationId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks", filter: `organization_id=eq.${displayOrganizationId}` }, () => {
+        window.clearTimeout(refreshTimeout);
+        refreshTimeout = window.setTimeout(() => void loadDashboard(), 350);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "projects", filter: `organization_id=eq.${displayOrganizationId}` }, () => {
+        window.clearTimeout(refreshTimeout);
+        refreshTimeout = window.setTimeout(() => void loadDashboard(), 350);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "departments", filter: `organization_id=eq.${displayOrganizationId}` }, () => {
+        window.clearTimeout(refreshTimeout);
+        refreshTimeout = window.setTimeout(() => void loadDashboard(), 350);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "organization_members", filter: `organization_id=eq.${displayOrganizationId}` }, () => {
+        window.clearTimeout(refreshTimeout);
+        refreshTimeout = window.setTimeout(() => void loadDashboard(), 350);
+      })
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setRealtimeStatus("live");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setRealtimeStatus("polling");
+        }
+      });
+    const fallbackTimer = window.setInterval(() => void loadDashboard(), 30_000);
+    return () => {
+      window.clearTimeout(refreshTimeout);
+      window.clearInterval(fallbackTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [displayOrganizationId, loadDashboard]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadNews = async () => {
+      try {
+        const response = await fetch("/api/saudi-news", { cache: "no-store" });
+        const result = await response.json() as NewsResponse;
+        if (cancelled) return;
+        if (!response.ok || !result.headlines.length) {
+          setNewsStatus("unavailable");
+          return;
+        }
+        setNews(result);
+        setNewsStatus("live");
+      } catch (loadError) {
+        if (cancelled) return;
+        console.error("Unable to refresh the Saudi headlines ticker.", loadError);
+        setNewsStatus("unavailable");
+      }
+    };
+    void loadNews();
+    const timer = window.setInterval(() => void loadNews(), 15 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const topLevelTasks = useMemo(() => (dashboard?.tasks ?? []).filter((task) => !task.parent_task_id), [dashboard]);
   const todayKey = dateKey(clock);
@@ -362,28 +438,56 @@ export default function TvDashboard() {
       String(first.due_date ?? "").localeCompare(String(second.due_date ?? "")),
     ).slice(0, 4);
   const departmentMaximum = Math.max(1, ...overview.departmentWorkload.map((department) => department.active));
+  const tickerHeadlines: NewsHeadline[] = news?.headlines.length
+    ? [...news.headlines, ...news.headlines]
+    : [{ title: newsStatus === "unavailable" ? "Saudi headlines temporarily unavailable · Operations dashboard remains live" : "Connecting to Saudi Arabia headlines…", url: "#", source: "Rigtech", publishedAt: null }];
 
   return (
-    <main className="min-h-screen bg-[#f9fafb] px-5 py-5 text-[#111827] xl:h-screen xl:min-h-[800px] xl:overflow-hidden xl:px-9 xl:py-6 2xl:px-14 2xl:py-8">
-      <div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-[1880px] flex-col xl:h-full xl:min-h-0">
-        <header className="mb-5 flex items-center justify-between border-b border-[#e5e7eb] pb-4 xl:mb-6 xl:pb-5">
+    <main className="tv-shell min-h-screen px-4 py-4 text-white sm:px-6 xl:h-screen xl:px-9 xl:py-4 2xl:px-12 2xl:py-5">
+      <div className="tv-board mx-auto grid max-w-[1880px] gap-3 xl:h-full xl:min-h-0 xl:grid-rows-[auto_auto_auto_minmax(0,1.25fr)_minmax(0,0.75fr)_auto] xl:gap-3 2xl:gap-4">
+        <header className="tv-header flex items-center justify-between border-b border-white/10 pb-3 xl:pb-3">
           <div className="flex min-w-0 items-center gap-4">
-            <Image src="/logo.png" alt="Rigtech Engineering" width={440} height={440} priority className="h-16 w-16 shrink-0 object-contain xl:h-[4.5rem] xl:w-[4.5rem]" />
-            <div className="min-w-0 border-l border-[#e5e7eb] pl-4">
-              <div className="truncate text-[10px] font-bold uppercase tracking-[0.24em] text-[#8e6728] xl:text-xs">Operations intelligence</div>
-              <h1 className="mt-1 truncate text-xl font-black tracking-[-0.045em] text-[#111827] xl:text-3xl">{dashboard.organizationName}</h1>
+            <div className="tv-logo-wrap"><Image src="/logo.png" alt="Rigtech Engineering" width={440} height={440} priority className="tv-logo h-20 w-20 shrink-0 object-contain sm:h-24 sm:w-24 xl:h-28 xl:w-28" /></div>
+            <div className="min-w-0 border-l border-white/15 pl-3 sm:pl-4">
+              <div className="truncate text-[9px] font-bold uppercase tracking-[0.24em] text-[#e1b958] sm:text-[10px] xl:text-xs">Operations intelligence</div>
+              <h1 className="mt-1 truncate text-lg font-black tracking-[-0.045em] text-white sm:text-xl xl:text-3xl">{dashboard.organizationName}</h1>
+              <div className="mt-1 hidden text-[9px] font-medium uppercase tracking-[0.18em] text-[#9aa9bd] sm:block xl:text-[10px]">Offshore &amp; infrastructure command</div>
             </div>
           </div>
           <div className="flex shrink-0 flex-col items-end">
-            <div className="text-2xl font-black tabular-nums tracking-[-0.04em] xl:text-4xl">{new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(clock)}</div>
-            <div className="mt-1 flex items-center gap-2 text-[10px] font-medium text-[#6b7280] xl:text-xs">
-              <CalendarDays className="h-3.5 w-3.5" />
+            <div className="text-2xl font-black tabular-nums tracking-[-0.04em] text-white sm:text-3xl xl:text-5xl">{new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(clock)}</div>
+            <div className="mt-1 flex items-center gap-1.5 text-[9px] font-medium text-[#aab8ca] sm:gap-2 sm:text-[10px] xl:text-xs">
+              <CalendarDays className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
               {new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(clock)}
             </div>
           </div>
         </header>
 
-        <section aria-label="Operations key performance indicators" className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:mb-5 xl:gap-4">
+        <section aria-label="Saudi Arabia live headlines" className="tv-ticker flex min-w-0 items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 sm:px-4">
+          <div className="flex shrink-0 items-center gap-2 border-r border-white/15 pr-3 sm:pr-4">
+            <span className={`tv-live-dot h-2 w-2 rounded-full ${newsStatus === "live" ? "bg-[#56e0be]" : "bg-[#e1b958]"}`} />
+            <Newspaper className="hidden h-4 w-4 text-[#e1b958] sm:block" />
+            <span className="text-[9px] font-black uppercase tracking-[0.13em] text-[#f2ce78] sm:text-[10px]">Saudi energy wire</span>
+          </div>
+          <div className="relative min-w-0 flex-1 overflow-hidden">
+            <div className={`tv-ticker-track flex w-max items-center ${news?.headlines.length ? "tv-ticker-moving" : ""}`}>
+              {tickerHeadlines.map((headline, index) => (
+                <div key={`${headline.source}-${headline.title}-${index}`} className="flex max-w-[min(82vw,52rem)] items-center gap-2 pr-8 text-[10px] font-medium text-white/90 sm:text-[11px] xl:pr-12 xl:text-xs">
+                  <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-[#d9b15b]">{headline.source}</span>
+                  {headline.url === "#" ? <span className="truncate">{headline.title}</span> : <a href={headline.url} target="_blank" rel="noreferrer" className="truncate underline-offset-2 hover:underline">{headline.title}</a>}
+                  {headline.publishedAt && <span className="shrink-0 text-[9px] text-white/45">{formatNewsTime(headline.publishedAt)}</span>}
+                  <span aria-hidden="true" className="text-[#c29337]">✦</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="hidden shrink-0 items-center gap-1.5 text-[9px] font-bold uppercase tracking-wide text-[#8fa0b5] md:flex">
+            <span className={`h-1.5 w-1.5 rounded-full ${newsStatus === "live" ? "bg-[#56e0be]" : "bg-[#e1b958]"}`} />
+            {newsStatus === "live" ? "Live headlines" : newsStatus === "unavailable" ? "Feed unavailable" : "Connecting"}
+          </div>
+        </section>
+
+        <section aria-label="Operations key performance indicators" className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:gap-4">
           {[
             { label: "Active projects", value: overview.activeProjects, foot: `${overview.completedProjects} delivered`, icon: BriefcaseBusiness, accent: "text-[#8e6728]", direction: "steady" },
             { label: "Open work items", value: overview.total - overview.counts.completed, foot: `${overview.counts.in_progress} in progress`, icon: Layers3, accent: "text-[#111827]", direction: "steady" },
@@ -404,8 +508,8 @@ export default function TvDashboard() {
           ))}
         </section>
 
-        <section className="mb-4 grid gap-3 lg:grid-cols-12 xl:mb-5 xl:min-h-0 xl:flex-1 xl:gap-4">
-          <article className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-4 xl:rounded-3xl xl:p-5">
+        <section className="grid gap-3 lg:grid-cols-12 xl:min-h-0 xl:gap-4">
+          <article className="min-h-0 overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-4 xl:rounded-3xl xl:p-5">
             <div className="mb-4 flex items-start justify-between">
               <div><h2 className="text-sm font-bold xl:text-base">Work status</h2><p className="mt-1 text-[10px] text-[#6b7280] xl:text-xs">Organization-wide distribution</p></div>
               <Activity className="h-4 w-4 text-[#8e6728] xl:h-5 xl:w-5" />
@@ -417,7 +521,7 @@ export default function TvDashboard() {
             </div>
           </article>
 
-          <article className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-5 xl:rounded-3xl xl:p-5">
+          <article className="min-h-0 overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-5 xl:rounded-3xl xl:p-5">
             <div className="mb-1 flex items-start justify-between">
               <div><h2 className="text-sm font-bold xl:text-base">Delivery trend</h2><p className="mt-1 text-[10px] text-[#6b7280] xl:text-xs">Tasks created and completed · last six months</p></div>
               <div className="rounded-xl bg-[#fbf7ef] p-2"><Activity className="h-4 w-4 text-[#8e6728]" /></div>
@@ -428,7 +532,7 @@ export default function TvDashboard() {
             </div>
           </article>
 
-          <article className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-3 xl:rounded-3xl xl:p-5">
+          <article className="min-h-0 overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-3 xl:rounded-3xl xl:p-5">
             <div className="mb-3 flex items-start justify-between">
               <div><h2 className="text-sm font-bold xl:text-base">Attention queue</h2><p className="mt-1 text-[10px] text-[#6b7280] xl:text-xs">Urgent and overdue items</p></div>
               <div className="flex h-8 min-w-8 items-center justify-center rounded-full bg-[#fbf7ef] px-2 text-xs font-black text-[#755321]">{overview.overdue.length + overview.urgent.length}</div>
@@ -449,8 +553,8 @@ export default function TvDashboard() {
           </article>
         </section>
 
-        <section className="grid gap-3 lg:grid-cols-12 xl:gap-4">
-          <article className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-8 xl:rounded-3xl xl:p-5">
+        <section className="grid gap-3 lg:grid-cols-12 xl:min-h-0 xl:gap-4">
+          <article className="min-h-0 overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-8 xl:rounded-3xl xl:p-5">
             <div className="mb-3 flex items-center justify-between">
               <div><h2 className="text-sm font-bold xl:text-base">Project portfolio</h2><p className="mt-1 text-[10px] text-[#6b7280] xl:text-xs">Live delivery progress across active projects</p></div>
               <BriefcaseBusiness className="h-4 w-4 text-[#8e6728] xl:h-5 xl:w-5" />
@@ -472,7 +576,7 @@ export default function TvDashboard() {
             </div>
           </article>
 
-          <article className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-4 xl:rounded-3xl xl:p-5">
+          <article className="min-h-0 overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_5px_20px_rgba(17,24,39,0.035)] lg:col-span-4 xl:rounded-3xl xl:p-5">
             <div className="mb-3 flex items-center justify-between">
               <div><h2 className="text-sm font-bold xl:text-base">Team & department activity</h2><p className="mt-1 text-[10px] text-[#6b7280] xl:text-xs">Open tasks by people and department</p></div>
               <Users className="h-4 w-4 text-[#8e6728] xl:h-5 xl:w-5" />
@@ -503,7 +607,7 @@ export default function TvDashboard() {
         </section>
 
         <footer className="mt-auto flex items-center justify-between pt-4 text-[9px] font-medium text-[#9ca3af] xl:pt-4 xl:text-[10px]">
-          <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#c29337]" />LIVE · READ-ONLY DISPLAY</span>
+          <span className="flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${realtimeStatus === "live" ? "animate-pulse bg-[#56e0be]" : "bg-[#e1b958]"}`} />{realtimeStatus === "live" ? "LIVE · READ-ONLY DISPLAY" : realtimeStatus === "polling" ? "POLLING · READ-ONLY DISPLAY" : "CONNECTING · READ-ONLY DISPLAY"}</span>
           <span>{updatedAt ? `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(updatedAt)}` : "Connecting"}</span>
         </footer>
       </div>
