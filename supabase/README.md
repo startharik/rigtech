@@ -79,3 +79,9 @@ values ('ORGANIZATION_UUID', 'AUTH_USER_UUID', 'admin');
 - Employees can be assigned to more than one department. Their assignments are
   stored in `organization_member_departments`, with `organization_members.department_id`
   retained as the primary/legacy department.
+- The menu-free office display is available at `/tv`. Create an employee
+  account for the display, create a custom role named exactly `TV Display`, and
+  assign that role to the account. Sign in to Rigtech with that account on the
+  TV browser once, then open `/tv`; the persisted session is checked on every
+  refresh. This role is restricted by the database to read-only access for the
+  TV dashboard modules. Do not use an admin, manager, or client login on the TV.
