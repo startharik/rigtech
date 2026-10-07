@@ -2052,7 +2052,19 @@ export default function Home() {
 
     if (createError || !createdTask) {
       console.error("Unable to create task in Supabase.", createError);
-      setSyncMessage("Task was not saved to Supabase. Check the database permissions.");
+      if (createError?.code === "42501") {
+        setSyncMessage(`Task creation was blocked by Supabase row-level security${createError.message ? `: ${createError.message}` : "."} Check that your account has Tasks → Manage access in this organization.`);
+      } else if (createError) {
+        const diagnostic = [
+          createError.code ? `(${createError.code})` : "",
+          createError.message,
+          createError.details,
+          createError.hint ? `Hint: ${createError.hint}` : "",
+        ].filter(Boolean).join(" ");
+        setSyncMessage(`Task was not saved to Supabase: ${diagnostic}`);
+      } else {
+        setSyncMessage("Supabase did not return the created task. Refresh and check the task list before retrying.");
+      }
       return;
     }
 
