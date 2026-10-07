@@ -72,6 +72,12 @@ values ('ORGANIZATION_UUID', 'AUTH_USER_UUID', 'admin');
   through `tasks.project_id`, or remain standalone. The task page supports
   list and Kanban layouts, and completion is calculated from nested subtasks
   (or from task status when no subtasks exist).
+- Members with project-management access can edit project details or delete a
+  project from its details panel. Deleting a project keeps its tasks as
+  standalone tasks; projects with linked workspace documents must have those
+  documents moved or deleted before the project can be removed.
+- Project creation requires the latest project access migration and the
+  organization member's project-management permission.
 - Organization admins and managers can also create a client portal login with
   an email and initial password. The client is linked to the account through
   `client_users`; client accounts see only projects assigned to their linked

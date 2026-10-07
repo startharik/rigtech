@@ -734,6 +734,7 @@ export default function Home() {
   const [projects, setProjects] = useState<WorkspaceProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectDetail | null>(null);
   const [projectDetailBusy, setProjectDetailBusy] = useState(false);
+  const [editingProject, setEditingProject] = useState(false);
   const [showMobileProjectForm, setShowMobileProjectForm] = useState(false);
   const [showMobileDirectoryForm, setShowMobileDirectoryForm] = useState(false);
   const [directorySearch, setDirectorySearch] = useState("");
@@ -1422,6 +1423,7 @@ export default function Home() {
 
   const openProjectDetails = async (project: WorkspaceProject) => {
     setProjectDetailBusy(true);
+    setEditingProject(false);
     setSyncMessage("");
     const { data: taskRows, error: taskError } = await supabase
       .from("task_tree")
@@ -1507,6 +1509,85 @@ export default function Home() {
       })),
     });
     setProjectDetailBusy(false);
+  };
+
+  const handleUpdateProject = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!organizationId || !selectedProject || !canManageModule("projects")) return;
+
+    const form = new FormData(event.currentTarget);
+    const projectId = selectedProject.project.id;
+    const updatedProject = {
+      name: String(form.get("name") ?? "").trim(),
+      description: String(form.get("description") ?? "").trim(),
+      client_id: String(form.get("client_id") ?? "") || null,
+      status: String(form.get("status") ?? "active"),
+      start_date: String(form.get("start_date") ?? "") || null,
+      target_date: String(form.get("target_date") ?? "") || null,
+    };
+    if (!updatedProject.name) return;
+
+    setProjectDetailBusy(true);
+    setSyncMessage("");
+    const { data, error } = await supabase
+      .from("projects")
+      .update(updatedProject)
+      .eq("id", projectId)
+      .eq("organization_id", organizationId)
+      .select("id, name, description, client_id, status, start_date, target_date")
+      .maybeSingle();
+    if (error || !data) {
+      setSyncMessage(`Unable to update project: ${error?.message ?? "The project was not updated. Check your access and try again."}`);
+      setProjectDetailBusy(false);
+      return;
+    }
+
+    const project: WorkspaceProject = {
+      ...selectedProject.project,
+      id: data.id,
+      name: data.name,
+      description: data.description ?? "",
+      clientId: data.client_id,
+      status: data.status,
+      startDate: data.start_date,
+      targetDate: data.target_date,
+    };
+    setProjects((current) => current.map((item) => item.id === project.id ? project : item).sort((a, b) => a.name.localeCompare(b.name)));
+    setTasks((current) => current.map((task) => task.project === selectedProject.project.name ? { ...task, project: project.name } : task));
+    setSelectedProject((current) => current ? { ...current, project } : current);
+    setEditingProject(false);
+    setProjectDetailBusy(false);
+    setSyncMessage(`Project "${project.name}" updated.`);
+  };
+
+  const handleDeleteProject = async () => {
+    if (!organizationId || !selectedProject || !canManageModule("projects")) return;
+    const project = selectedProject.project;
+    if (!window.confirm(`Delete "${project.name}"? Its tasks will be kept as standalone tasks. This cannot be undone.`)) return;
+
+    setProjectDetailBusy(true);
+    setSyncMessage("");
+    const { data, error } = await supabase
+      .from("projects")
+      .delete()
+      .eq("id", project.id)
+      .eq("organization_id", organizationId)
+      .select("id")
+      .maybeSingle();
+    if (error || !data) {
+      const linkedDocuments = error?.code === "23503" && `${error.message} ${error.details ?? ""}`.includes("workspace_documents");
+      setSyncMessage(linkedDocuments
+        ? "Unable to delete this project while documents are linked to it. Move or delete its documents first."
+        : `Unable to delete project: ${error?.message ?? "The project was not deleted. Check your access and try again."}`);
+      setProjectDetailBusy(false);
+      return;
+    }
+
+    setProjects((current) => current.filter((item) => item.id !== project.id));
+    setTasks((current) => current.map((task) => task.project === project.name ? { ...task, project: "Standalone task" } : task));
+    setSelectedProject(null);
+    setProjectDetailBusy(false);
+    setSyncMessage(`Project "${project.name}" deleted. Its tasks remain in the workspace.`);
   };
 
   const addProjectMilestone = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -2289,7 +2370,15 @@ export default function Home() {
         start_date: projectStartDate || null,
         target_date: projectTargetDate || null,
       }).select("id, name, description, client_id, status, start_date, target_date").single();
-      error = result.error;
+      error = result.error
+        ? {
+            message: result.error.code === "23505"
+              ? "A project with this name already exists in your organization. Choose a different name."
+              : result.error.code === "42501" || result.error.message.toLowerCase().includes("row-level security")
+                ? "Your account does not have permission to create projects. Ask an organization admin to grant Projects management access. If you already have access, ensure the latest Supabase migrations have been applied."
+                : result.error.message,
+          }
+        : null;
       if (!error && result.data) {
         setProjects((current) => [...current, { id: result.data.id, name: result.data.name, description: result.data.description, clientId: result.data.client_id, status: result.data.status, startDate: result.data.start_date, targetDate: result.data.target_date }].sort((a, b) => a.name.localeCompare(b.name)));
         setProjectStartDate("");
@@ -4166,14 +4255,55 @@ export default function Home() {
             onClick={(event) => event.stopPropagation()}
             className="absolute right-0 top-0 h-[100dvh] w-full max-w-3xl overflow-y-auto border-slate-200 bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))] shadow-2xl sm:border-l sm:p-7"
           >
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div>
+            <div className="mb-6 flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
                 <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-700">Project details</div>
                 <h2 id="project-detail-title" className="mt-2 text-3xl font-black tracking-[-0.06em] text-slate-950">{selectedProject.project.name}</h2>
                 <p className="mt-2 text-sm text-slate-500">{selectedProject.project.description || "No project description yet."}</p>
               </div>
-              <button ref={projectDetailCloseRef} type="button" onClick={() => setSelectedProject(null)} aria-label="Close project details" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
+              <div className="flex shrink-0 items-center gap-2">
+                {canManageModule("projects") && (
+                  <>
+                    <button type="button" disabled={projectDetailBusy} onClick={() => setEditingProject((current) => !current)} aria-label={editingProject ? "Cancel project editing" : "Edit project"} title={editingProject ? "Cancel editing" : "Edit project"} className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50">
+                      {editingProject ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+                    </button>
+                    <button type="button" disabled={projectDetailBusy} onClick={() => void handleDeleteProject()} aria-label={`Delete project ${selectedProject.project.name}`} title="Delete project" className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>
+                  </>
+                )}
+                <button ref={projectDetailCloseRef} type="button" onClick={() => setSelectedProject(null)} aria-label="Close project details" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700"><X className="h-4 w-4" /></button>
+              </div>
             </div>
+
+            {editingProject && canManageModule("projects") && (
+              <form onSubmit={handleUpdateProject} className="mb-6 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600 sm:col-span-2">Project name
+                  <input name="name" required maxLength={160} defaultValue={selectedProject.project.name} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                </label>
+                <label className="text-xs font-semibold text-slate-600 sm:col-span-2">Description
+                  <textarea name="description" rows={3} defaultValue={selectedProject.project.description} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Client
+                  <select name="client_id" defaultValue={selectedProject.project.clientId ?? ""} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                    <option value="">Internal project</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Status
+                  <select name="status" defaultValue={selectedProject.project.status ?? "active"} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                    <option value="active">Active</option><option value="completed">Completed</option><option value="archived">Archived</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Start date
+                  <input name="start_date" type="date" defaultValue={selectedProject.project.startDate ?? ""} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Target date
+                  <input name="target_date" type="date" defaultValue={selectedProject.project.targetDate ?? ""} className="mt-1.5 min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-emerald-700" />
+                </label>
+                <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row sm:justify-end">
+                  <button type="button" disabled={projectDetailBusy} onClick={() => setEditingProject(false)} className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50">Cancel</button>
+                  <button type="submit" disabled={projectDetailBusy} className="min-h-11 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-50">{projectDetailBusy ? "Saving…" : "Save project"}</button>
+                </div>
+              </form>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-2xl bg-slate-950 p-4 text-white"><div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Tasks</div><div className="mt-2 text-2xl font-black">{selectedProject.tasks.filter((task) => !task.parentTaskId).length}</div><div className="text-xs text-slate-400">{selectedProject.tasks.length} including subtasks</div></div>
