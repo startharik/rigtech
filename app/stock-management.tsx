@@ -35,6 +35,7 @@ type StockCategory = {
 type StockMovement = {
   id: string;
   stock_item_id: string;
+  project_id: string | null;
   movement_type: "receipt" | "issue";
   quantity: number;
   ordered_quantity: number | null;
@@ -48,6 +49,7 @@ type StockMovement = {
   comments: string | null;
 };
 
+type StockProject = { id: string; name: string };
 type StockRole = "admin" | "manager" | "supervisor" | "employee" | "client";
 
 const today = () => {
@@ -63,16 +65,18 @@ const formatDate = (value: string) =>
 
 const itemFields = "id, item_code, name, category, description, unit, minimum_quantity, quantity_on_hand, last_unit_price";
 const categoryFields = "id, name";
-const movementFields = "id, stock_item_id, movement_type, quantity, ordered_quantity, movement_date, purchase_order, project_number, delivery_note, area, mtc, unit_price, comments";
+const movementFields = "id, stock_item_id, project_id, movement_type, quantity, ordered_quantity, movement_date, purchase_order, project_number, delivery_note, area, mtc, unit_price, comments";
 
 export default function StockManagement({
   organizationId,
   role,
   canManageOverride = false,
+  projects,
 }: {
   organizationId: string;
   role: StockRole | null;
   canManageOverride?: boolean;
+  projects: StockProject[];
 }) {
   const [items, setItems] = useState<StockItem[]>([]);
   const [categories, setCategories] = useState<StockCategory[]>([]);
@@ -111,7 +115,7 @@ export default function StockManagement({
   const [orderedQuantity, setOrderedQuantity] = useState("");
   const [movementDate, setMovementDate] = useState(today);
   const [purchaseOrder, setPurchaseOrder] = useState("");
-  const [projectNumber, setProjectNumber] = useState("");
+  const [movementProjectId, setMovementProjectId] = useState("");
   const [deliveryNote, setDeliveryNote] = useState("");
   const [area, setArea] = useState("");
   const [mtc, setMtc] = useState("");
@@ -202,7 +206,7 @@ export default function StockManagement({
     setOrderedQuantity("");
     setMovementDate(today());
     setPurchaseOrder("");
-    setProjectNumber("");
+    setMovementProjectId("");
     setDeliveryNote("");
     setArea("");
     setMtc("");
@@ -352,12 +356,13 @@ export default function StockManagement({
         p_movement_date: movementDate,
         p_ordered_quantity: movementType === "receipt" && orderedQuantity ? Number(orderedQuantity) : null,
         p_purchase_order: movementType === "receipt" ? purchaseOrder.trim() || null : null,
-        p_project_number: projectNumber.trim() || null,
+        p_project_number: null,
         p_delivery_note: movementType === "receipt" ? deliveryNote.trim() || null : null,
         p_area: movementType === "issue" ? area.trim() || null : null,
         p_mtc: movementType === "receipt" ? mtc.trim() || null : null,
         p_unit_price: movementType === "receipt" && unitPrice ? Number(unitPrice) : null,
         p_comments: comments.trim() || null,
+        p_project_id: movementProjectId || null,
       });
       if (error) {
         setErrorMessage(`Unable to record ${movementType}: ${error.message}`);
@@ -471,18 +476,17 @@ export default function StockManagement({
             <label className="text-xs font-semibold text-slate-600 sm:col-span-2 xl:col-span-1">Item<select value={movementItemId} onChange={(event) => setMovementItemId(event.target.value)} required className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400"><option value="">Select an item</option>{items.map((item) => <option key={item.id} value={item.id}>{item.item_code} — {item.name} ({formatQuantity(item.quantity_on_hand)} {item.unit})</option>)}</select></label>
             <label className="text-xs font-semibold text-slate-600">{movementType === "receipt" ? "Received quantity" : "Issued quantity"}<input value={movementQuantity} onChange={(event) => setMovementQuantity(event.target.value)} required type="number" min="0.001" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
             <label className="text-xs font-semibold text-slate-600">Date<input value={movementDate} onChange={(event) => setMovementDate(event.target.value)} required type="date" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
+            <label className="text-xs font-semibold text-slate-600">Project<select value={movementProjectId} onChange={(event) => setMovementProjectId(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400"><option value="">No project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             {movementType === "receipt" ? (
               <>
                 <label className="text-xs font-semibold text-slate-600">Ordered quantity<input value={orderedQuantity} onChange={(event) => setOrderedQuantity(event.target.value)} type="number" min="0" step="0.001" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
                 <label className="text-xs font-semibold text-slate-600">Purchase order<input value={purchaseOrder} onChange={(event) => setPurchaseOrder(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
-                <label className="text-xs font-semibold text-slate-600">Project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
                 <label className="text-xs font-semibold text-slate-600">Delivery note<input value={deliveryNote} onChange={(event) => setDeliveryNote(event.target.value)} maxLength={120} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
                 <label className="text-xs font-semibold text-slate-600">MTC / certificate<input value={mtc} onChange={(event) => setMtc(event.target.value)} maxLength={120} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
                 <label className="text-xs font-semibold text-slate-600">Unit price<input value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} type="number" min="0" step="0.01" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
               </>
             ) : (
               <>
-                <label className="text-xs font-semibold text-slate-600">Project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} maxLength={100} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
                 <label className="text-xs font-semibold text-slate-600">Area / location<input value={area} onChange={(event) => setArea(event.target.value)} maxLength={100} placeholder="e.g. Area 1" className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-800 outline-none focus:border-emerald-400" /></label>
               </>
             )}
@@ -627,7 +631,7 @@ export default function StockManagement({
                 </div>
                 <div className={`mt-3 text-2xl font-black tracking-tight ${receipt ? "text-emerald-800" : "text-slate-950"}`}>{receipt ? "+" : "−"}{formatQuantity(movement.quantity)} <span className="text-sm font-semibold">{item?.unit ?? ""}</span></div>
                 <div className="mt-2 space-y-1 text-xs text-slate-700">
-                  {movement.project_number && <p>Project {movement.project_number}{movement.area ? ` · ${movement.area}` : ""}</p>}
+                  {(projects.find((project) => project.id === movement.project_id)?.name || movement.project_number) && <p>Project {projects.find((project) => project.id === movement.project_id)?.name ?? movement.project_number}{movement.area ? ` · ${movement.area}` : ""}</p>}
                   {(movement.purchase_order || movement.delivery_note || movement.mtc) && <p>Reference {[movement.purchase_order, movement.delivery_note, movement.mtc].filter(Boolean).join(" · ")}</p>}
                   {movement.comments && <p className="break-words text-slate-600">{movement.comments}</p>}
                 </div>
@@ -648,7 +652,7 @@ export default function StockManagement({
                       <td className="px-4 py-3"><div className="font-semibold text-slate-900">{item?.name ?? "Unknown item"}</div><div className="mt-0.5 text-xs text-slate-500">{item?.item_code ?? "Item unavailable"}</div></td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${movement.movement_type === "receipt" ? "bg-sky-100 text-sky-700" : "bg-violet-100 text-violet-700"}`}>{movement.movement_type === "receipt" ? "Receipt" : "Issue"}</span></td>
                       <td className={`px-4 py-3 font-semibold ${movement.movement_type === "receipt" ? "text-emerald-700" : "text-slate-700"}`}>{movement.movement_type === "receipt" ? "+" : "−"}{formatQuantity(movement.quantity)} {item?.unit ?? ""}</td>
-                      <td className="px-4 py-3 text-slate-600">{[movement.project_number, movement.area].filter(Boolean).join(" · ") || "—"}</td>
+                      <td className="px-4 py-3 text-slate-600">{[projects.find((project) => project.id === movement.project_id)?.name ?? movement.project_number, movement.area].filter(Boolean).join(" · ") || "—"}</td>
                       <td className="px-4 py-3 text-slate-600">{movement.movement_type === "receipt" ? [movement.purchase_order, movement.delivery_note].filter(Boolean).join(" · ") || "—" : movement.mtc || "—"}</td>
                       <td className="max-w-56 truncate px-4 py-3 text-slate-500" title={movement.comments ?? ""}>{movement.comments || (movement.movement_type === "receipt" && movement.ordered_quantity !== null ? `Ordered ${formatQuantity(movement.ordered_quantity)}` : "—")}</td>
                     </tr>

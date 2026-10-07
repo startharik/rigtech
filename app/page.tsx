@@ -23,6 +23,7 @@ import {
   TrendingUp,
   TriangleAlert,
   ClipboardList,
+  Download,
   FolderKanban,
   Layers3,
   KanbanSquare,
@@ -139,6 +140,28 @@ type ProjectMilestone = {
   completedAt: string | null;
 };
 
+type ProjectDocument = {
+  id: string;
+  fileName: string;
+  storagePath: string;
+  mimeType: string | null;
+  fileSize: number;
+  createdAt: string;
+};
+
+type ProjectStockMovement = {
+  id: string;
+  stockItemId: string;
+  itemCode: string;
+  itemName: string;
+  unit: string;
+  movementType: "receipt" | "issue";
+  quantity: number;
+  movementDate: string;
+  area: string | null;
+  comments: string | null;
+};
+
 type ProjectTaskDetail = {
   id: string;
   title: string;
@@ -156,6 +179,8 @@ type ProjectDetail = {
   milestones: ProjectMilestone[];
   attachments: TaskAttachment[];
   comments: TaskComment[];
+  documents: ProjectDocument[];
+  stockMovements: ProjectStockMovement[];
 };
 
 type TaskComment = {
@@ -958,9 +983,9 @@ export default function Home() {
           updatedAt: note.updated_at,
         })));
       } catch (error) {
-        console.error("Unable to reach Supabase while loading sticky notes.", error);
+        console.error("Unable to reach the Rigtech workspace while loading sticky notes.", error);
         setSyncMessage(error instanceof TypeError && error.message.toLowerCase().includes("fetch")
-          ? "Unable to reach Supabase while loading sticky notes. Check your internet connection and retry."
+          ? "Unable to reach the Rigtech workspace while loading sticky notes. Check your internet connection and retry."
           : `Unable to load sticky notes: ${error instanceof Error ? error.message : "Unexpected network error."}`);
       }
     };
@@ -1189,7 +1214,7 @@ export default function Home() {
         setSelectedTask(null);
       } catch (error) {
         console.error("Unable to load the authenticated workspace.", error);
-        setSyncMessage(error instanceof Error ? error.message : "Unable to load your Supabase workspace.");
+        setSyncMessage(error instanceof Error ? error.message : "Unable to load your Rigtech workspace.");
       }
     };
 
@@ -1422,6 +1447,10 @@ export default function Home() {
   }, [departments, directorySearch]);
 
   const openProjectDetails = async (project: WorkspaceProject) => {
+    if (!organizationId) {
+      setSyncMessage("Your workspace is not ready. Reload the page and try again.");
+      return;
+    }
     setProjectDetailBusy(true);
     setEditingProject(false);
     setSyncMessage("");
@@ -1466,6 +1495,43 @@ export default function Home() {
       return;
     }
 
+    const [documentResult, stockMovementResult] = await Promise.all([
+      currentRole !== "client"
+        ? supabase.from("workspace_documents")
+          .select("id, file_name, storage_path, mime_type, file_size, created_at")
+          .eq("organization_id", organizationId)
+          .eq("project_id", project.id)
+          .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      currentRole !== "client" && canViewModule("stock")
+        ? supabase.from("stock_movements")
+          .select("id, stock_item_id, movement_type, quantity, movement_date, area, comments")
+          .eq("organization_id", organizationId)
+          .eq("project_id", project.id)
+          .order("movement_date", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (documentResult.error) {
+      setSyncMessage(`Unable to load project documents: ${documentResult.error.message}`);
+      setProjectDetailBusy(false);
+      return;
+    }
+    if (stockMovementResult.error) {
+      setSyncMessage(`Unable to load project stock activity: ${stockMovementResult.error.message}`);
+      setProjectDetailBusy(false);
+      return;
+    }
+    const stockItemIds = [...new Set((stockMovementResult.data ?? []).map((movement) => movement.stock_item_id))];
+    const { data: stockItems, error: stockItemsError } = stockItemIds.length
+      ? await supabase.from("stock_items").select("id, item_code, name, unit").in("id", stockItemIds)
+      : { data: [], error: null };
+    if (stockItemsError) {
+      setSyncMessage(`Unable to load project stock item details: ${stockItemsError.message}`);
+      setProjectDetailBusy(false);
+      return;
+    }
+    const stockItemById = new Map((stockItems ?? []).map((item) => [item.id, item]));
+
     const authorIds = (commentRows ?? []).map((comment) => comment.author_id);
     const { data: profiles, error: profilesError } = authorIds.length
       ? await supabase.from("profiles").select("id, full_name, name").in("id", authorIds)
@@ -1507,8 +1573,40 @@ export default function Home() {
         body: comment.body,
         createdAt: comment.created_at,
       })),
+      documents: (documentResult.data ?? []).map((document) => ({
+        id: document.id,
+        fileName: document.file_name,
+        storagePath: document.storage_path,
+        mimeType: document.mime_type,
+        fileSize: Number(document.file_size),
+        createdAt: document.created_at,
+      })),
+      stockMovements: (stockMovementResult.data ?? []).flatMap((movement) => {
+        const item = stockItemById.get(movement.stock_item_id);
+        return item ? [{
+          id: movement.id,
+          stockItemId: movement.stock_item_id,
+          itemCode: item.item_code,
+          itemName: item.name,
+          unit: item.unit,
+          movementType: movement.movement_type as ProjectStockMovement["movementType"],
+          quantity: Number(movement.quantity),
+          movementDate: movement.movement_date,
+          area: movement.area,
+          comments: movement.comments,
+        }] : [];
+      }),
     });
     setProjectDetailBusy(false);
+  };
+
+  const openProjectDocument = async (document: ProjectDocument) => {
+    const { data, error } = await supabase.storage.from("workspace-documents").createSignedUrl(document.storagePath, 60, { download: true });
+    if (error || !data?.signedUrl) {
+      setSyncMessage(`Unable to open ${document.fileName}: ${error?.message ?? "No download link was returned."}`);
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
   const handleUpdateProject = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1624,8 +1722,22 @@ export default function Home() {
     setSelectedProject((current) => current ? { ...current, milestones: current.milestones.map((item) => item.id === milestone.id ? { ...item, completedAt } : item) } : current);
   };
 
+  const projectStockUsage = selectedProject?.stockMovements
+    .filter((movement) => movement.movementType === "issue")
+    .reduce((usage, movement) => {
+      const current = usage.get(movement.stockItemId);
+      if (current) current.quantity += movement.quantity;
+      else usage.set(movement.stockItemId, {
+        itemCode: movement.itemCode,
+        itemName: movement.itemName,
+        unit: movement.unit,
+        quantity: movement.quantity,
+      });
+      return usage;
+    }, new Map<string, { itemCode: string; itemName: string; unit: string; quantity: number }>());
+
   const metrics = [
-    { label: "Active tasks", value: String(tasks.filter((task) => task.status !== "Completed").length), subtext: "From your Supabase workspace", tone: "bg-slate-950 text-white" },
+    { label: "Active tasks", value: String(tasks.filter((task) => task.status !== "Completed").length), subtext: "From your Rigtech workspace", tone: "bg-slate-950 text-white" },
     { label: "Due today", value: String(tasks.filter((task) => task.due === "Today").length), subtext: "Current assigned work", tone: "bg-white text-slate-900" },
     { label: "Completed", value: String(tasks.filter((task) => task.status === "Completed").length), subtext: "Completed workspace tasks", tone: "bg-white text-slate-900" },
     { label: "Team capacity", value: tasks.length ? "—" : "0", subtext: tasks.length ? "Capacity tracking coming next" : "No task data yet", tone: "bg-white text-slate-900" },
@@ -2051,9 +2163,9 @@ export default function Home() {
       .single();
 
     if (createError || !createdTask) {
-      console.error("Unable to create task in Supabase.", createError);
+      console.error("Unable to create task in the Rigtech workspace.", createError);
       if (createError?.code === "42501") {
-        setSyncMessage(`Task creation was blocked by Supabase row-level security${createError.message ? `: ${createError.message}` : "."} Check that your account has Tasks → Manage access in this organization.`);
+        setSyncMessage(`Task creation was blocked by Rigtech workspace access rules${createError.message ? `: ${createError.message}` : "."} Check that your account has Tasks → Manage access in this organization.`);
       } else if (createError) {
         const diagnostic = [
           createError.code ? `(${createError.code})` : "",
@@ -2061,9 +2173,9 @@ export default function Home() {
           createError.details,
           createError.hint ? `Hint: ${createError.hint}` : "",
         ].filter(Boolean).join(" ");
-        setSyncMessage(`Task was not saved to Supabase: ${diagnostic}`);
+        setSyncMessage(`Task was not saved to Rigtech: ${diagnostic}`);
       } else {
-        setSyncMessage("Supabase did not return the created task. Refresh and check the task list before retrying.");
+        setSyncMessage("Rigtech did not return the created task. Refresh and check the task list before retrying.");
       }
       return;
     }
@@ -2111,7 +2223,7 @@ export default function Home() {
       });
     }
 
-    setSyncMessage(assignmentSaveWarning || subtaskSaveWarning || "Task saved to Supabase.");
+    setSyncMessage(assignmentSaveWarning || subtaskSaveWarning || "Task saved to Rigtech.");
     const savedTask = { ...nextTask, supabaseId: createdTask.id, subtasks: createdSubtasks };
     setTasks((current) => [savedTask, ...current]);
     const notificationRows = assigneeIds
@@ -2173,7 +2285,7 @@ export default function Home() {
       setSubtaskTitle("");
       setSubtaskDescription("");
       setSubtaskParentId(null);
-      setSyncMessage("Subtask saved to Supabase.");
+      setSyncMessage("Subtask saved to Rigtech.");
     }
     setSubtaskBusy(false);
   };
@@ -2229,7 +2341,7 @@ export default function Home() {
       const { data: signed } = await supabase.storage.from("task-attachments").createSignedUrl(data.storage_path, 3600);
       setAttachments((current) => [{ id: data.id, fileName: data.file_name, mimeType: data.mime_type, url: signed?.signedUrl ?? null, uploadedAt: data.created_at }, ...current]);
       setAttachmentRetry(null);
-      setSyncMessage("Attachment uploaded to Supabase.");
+      setSyncMessage("Attachment uploaded to Rigtech.");
     }
     setAttachmentBusy(false);
   };
@@ -2388,7 +2500,7 @@ export default function Home() {
             message: result.error.code === "23505"
               ? "A project with this name already exists in your organization. Choose a different name."
               : result.error.code === "42501" || result.error.message.toLowerCase().includes("row-level security")
-                ? "Your account does not have permission to create projects. Ask an organization admin to grant Projects management access. If you already have access, ensure the latest Supabase migrations have been applied."
+                ? "Your account does not have permission to create projects. Ask an organization admin to grant Projects management access. If you already have access, ask an admin to update the Rigtech workspace."
                 : result.error.message,
           }
         : null;
@@ -2698,9 +2810,9 @@ export default function Home() {
       setShowNoteComposer(false);
       setSyncMessage(editingNoteId ? "Sticky note updated." : "Sticky note saved.");
     } catch (error) {
-      console.error("Unable to reach Supabase while saving a sticky note.", error);
+      console.error("Unable to reach the Rigtech workspace while saving a sticky note.", error);
       setSyncMessage(error instanceof TypeError && error.message.toLowerCase().includes("fetch")
-        ? "Unable to reach Supabase. Check your internet connection and try again; your note is still in the editor."
+        ? "Unable to reach the Rigtech workspace. Check your internet connection and try again; your note is still in the editor."
         : `Unable to save sticky note: ${error instanceof Error ? error.message : "Unexpected network error."}`);
     } finally {
       setNoteBusy(false);
@@ -3270,7 +3382,7 @@ export default function Home() {
             )}
 
             {view === "stock" && organizationId && (
-              <StockManagement organizationId={organizationId} role={currentRole} canManageOverride={canManageModule("stock")} />
+              <StockManagement organizationId={organizationId} role={currentRole} canManageOverride={canManageModule("stock")} projects={projects} />
             )}
             {view === "documents" && organizationId && (
               <DocumentManagement
@@ -4327,6 +4439,57 @@ export default function Home() {
               <span className="rounded-full bg-slate-100 px-3 py-1.5">Start: {selectedProject.project.startDate ?? "Not set"}</span>
               <span className="rounded-full bg-slate-100 px-3 py-1.5">Target: {selectedProject.project.targetDate ?? "Not set"}</span>
             </div>
+
+            {currentRole !== "client" && (
+              <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                <section className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-600">Project documents</h3>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">{selectedProject.documents.length}</span>
+                  </div>
+                  {selectedProject.documents.length ? (
+                    <div className="max-h-64 space-y-2 overflow-y-auto">
+                      {selectedProject.documents.map((document) => (
+                        <div key={document.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5">
+                          <Files className="h-4 w-4 shrink-0 text-sky-700" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-semibold text-slate-800" title={document.fileName}>{document.fileName}</div>
+                            <div className="mt-0.5 text-[10px] text-slate-500">
+                              {formatUploadedDate(document.createdAt)} · {document.fileSize < 1024 * 1024 ? `${Math.max(1, Math.round(document.fileSize / 1024))} KB` : `${(document.fileSize / (1024 * 1024)).toFixed(1)} MB`}
+                            </div>
+                          </div>
+                          <button type="button" onClick={() => void openProjectDocument(document)} aria-label={`Download ${document.fileName}`} title="Download document" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-sky-300 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700">
+                            <Download className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <div className="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-4 text-xs text-slate-500">No accessible documents are tagged to this project.</div>}
+                </section>
+
+                {canViewModule("stock") && (
+                  <section className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-slate-600">Stock used</h3>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">{projectStockUsage?.size ?? 0} items</span>
+                    </div>
+                    {projectStockUsage?.size ? (
+                      <div className="max-h-64 space-y-2 overflow-y-auto">
+                        {[...projectStockUsage.entries()].map(([stockItemId, item]) => (
+                          <div key={stockItemId} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-semibold text-slate-800">{item.itemName}</div>
+                              <div className="mt-0.5 text-[10px] text-slate-500">{item.itemCode}</div>
+                            </div>
+                            <div className="shrink-0 text-right text-sm font-bold tabular-nums text-slate-900">{new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(item.quantity)} <span className="text-[10px] font-medium text-slate-500">{item.unit}</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <div className="rounded-xl border border-dashed border-slate-200 bg-white px-3 py-4 text-xs text-slate-500">No stock issues are linked to this project yet.</div>}
+                  </section>
+                )}
+              </div>
+            )}
 
             <section className="mt-7">
               <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-bold uppercase tracking-[0.14em] text-slate-500">Milestones</h3><span className="text-xs text-slate-400">{selectedProject.milestones.filter((milestone) => milestone.completedAt).length}/{selectedProject.milestones.length} complete</span></div>

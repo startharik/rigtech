@@ -172,6 +172,7 @@ export type Database = {
           id: string;
           organization_id: string;
           stock_item_id: string;
+          project_id: string | null;
           movement_type: "receipt" | "issue";
           quantity: number;
           ordered_quantity: number | null;
@@ -190,6 +191,7 @@ export type Database = {
           id?: string;
           organization_id: string;
           stock_item_id: string;
+          project_id?: string | null;
           movement_type: "receipt" | "issue";
           quantity: number;
           ordered_quantity?: number | null;
@@ -299,6 +301,7 @@ export type Database = {
             p_mtc?: string | null;
             p_unit_price?: number | null;
             p_comments?: string | null;
+            p_project_id?: string | null;
           };
           Returns: string;
         };
